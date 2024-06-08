@@ -1,0 +1,1058 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<metadata>
+<idinfo>
+<datsetid>gov.noaa.nws.ohd.hdsc: OHD-HDSC-NOAAAtlas14V8v2013-MW</datsetid>
+<citation>
+<citeinfo>
+<origin>NOAA/NWS/Office of Hydrologic Development, Hydrometeorological Design Studies Center</origin>
+<pubdate>20130415</pubdate>
+<title>Precipitation Frequency for Midwestern states, USA - NOAA Atlas 14 Volume 8</title>
+<geoform>raster digital data</geoform>
+<serinfo>
+<sername>NOAA Atlas 14</sername>
+<issue>Volume 8</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Silver Spring, MD, USA</pubplace>
+<publish>NOAA/NWS/Office of Hydrologic Development, Hydrometeorological Design Studies Center</publish>
+</pubinfo>
+<onlink>http://hdsc.nws.noaa.gov/hdsc/pfds/pfds_gis.html</onlink>
+<onlink>http://hdsc.nws.noaa.gov/hdsc/pfds/</onlink>
+<onlink>http://www.nws.noaa.gov/ohd/hdsc/index.html</onlink>
+</citeinfo>
+</citation>
+<descript>
+<abstract>This GIS grid atlas contains precipitation frequency estimates for Midwestern states based on precipitation data collected between 1836-2013. This atlas supersedes information in Technical Memorandum NWS Hydro 35, published in 1977, NOAA Atlas 2, published in 1973 (Colorado), Technical Paper 40, published in 1961, and Technical Paper 49,published in 1964. The grids provide information for durations from 5 minutes through 60 days, and for return periods of 1 year through 1000 years.</abstract>
+<purpose>Precipitation frequency (PF) estimates are used as basic design criteria for a wide variety of hydraulic structures such as culverts, roadway drainages, bridges and small dams. This dataset is for the display and/or analyses of spatially distributed point PF estimates.</purpose>
+<supplinf>None</supplinf>
+</descript>
+<timeperd>
+<timeinfo>
+<rngdates>
+<begdate>18361101</begdate>
+<enddate>20130301</enddate>
+</rngdates>
+</timeinfo>
+<current>Climatological period from which the point precipitation observations were taken.</current>
+</timeperd>
+<status>
+<progress>Complete</progress>
+<update>As needed.</update>
+</status>
+<spdom>
+<bounding>
+<westbc>-109.3625</westbc>
+<eastbc>-82.371913</eastbc>
+<northbc>49.428522</northbc>
+<southbc>33.3125</southbc>
+</bounding>
+</spdom>
+<keywords>
+<theme>
+<themekt>NASA GCMD Science Keywords</themekt>
+<themekey>Atmosphere &gt; Precipitation &gt; Precipitation Frequency</themekey>
+</theme>
+<theme>
+<themekt>ISO 19115 Topic Category</themekt>
+<themekey>ClimatologyMeteorologyAtmosphere</themekey>
+</theme>
+<place>
+<placekt>None</placekt>
+<placekey>Midwestern States</placekey>
+</place>
+<stratum>
+<stratkt>NASA GCMD Location Keywords</stratkt>
+<stratkey>Vertical Location &gt; Ground Layer</stratkey>
+</stratum>
+</keywords>
+<thelayid>
+<numthlay>1</numthlay>
+<layrname>
+<theme>
+<themekt>NASA GCMD Science Keywords</themekt>
+<themekey>Atmosphere &gt; Precipitation &gt; Precipitation Frequency</themekey>
+</theme>
+</layrname>
+</thelayid>
+<accconst>n/a, no restrictions apply and data is public domain.</accconst>
+<useconst>Acknowledgement of NOAA/National Weather Service, Office of Hydrologic Development, Hydrometeorological Design Studies Center (HDSC)</useconst>
+<ptcontac>
+<cntinfo>
+<cntorgp>
+<cntorg>NOAA/National Weather Service, Office of Hydrologic Development, Hydrometeorological Design Studies Center</cntorg>
+</cntorgp>
+<cntaddr>
+<addrtype>mailing and physical address</addrtype>
+<address>NOAA/NWS/Office of Hydrologic Development</address>
+<address>SSMC2, W/OHD 12</address>
+<address>1325 East-West Highway</address>
+<city>Silver Spring</city>
+<state>MD</state>
+<postal>20910</postal>
+<country>USA</country>
+</cntaddr>
+<cntemail>hdsc.questions@noaa.gov</cntemail>
+<hours>9 a.m. to 5 p.m. Eastern, Monday-Friday</hours>
+</cntinfo>
+</ptcontac>
+<browse>
+<browsen>http://hdsc.nws.noaa.gov/hdsc/pfds/meta/images/mw1_web_thumbnail.png</browsen>
+<browsed>MW 100-year 24-hour</browsed>
+<browset>PNG</browset>
+</browse>
+<secinfo>
+<secsys>None</secsys>
+<secclass>Unclassified</secclass>
+<sechandl>None</sechandl>
+</secinfo>
+<native>Microsoft Windows XP/7</native>
+<crossref>
+<citeinfo>
+<origin>National Oceanic and Atmospheric Administration, National Weather Service, Office of Hydrology</origin>
+<pubdate>1977</pubdate>
+<title>Technical Memorandum NWS Hydro 35, Five to 60-minutes Precipitation Frequency for Eastern and Central United States (1977).</title>
+<geoform>document</geoform>
+<serinfo>
+<sername>TM Hydro35</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Silver Spring, MD, USA</pubplace>
+<publish>National Weather Service</publish>
+</pubinfo>
+<onlink>http://www.nws.noaa.gov/oh/hdsc/PF_documents/TechnicalMemo_HYDRO35.pdf</onlink>
+</citeinfo>
+</crossref>
+<crossref>
+<citeinfo>
+<origin>U.S. Weather Bureau</origin>
+<pubdate>1961</pubdate>
+<title>Technical Paper 40, Rainfall Frequency Atlas of the United States for Durations from 30 Minutes to 24 Hours and Return Periods from 1 to 100 Years</title>
+<geoform>document</geoform>
+<serinfo>
+<sername>TP40</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Silver Spring, MD, USA</pubplace>
+<publish>U.S. Weather Bureau</publish>
+</pubinfo>
+<onlink>http://www.nws.noaa.gov/oh/hdsc/PF_documents/TechnicalPaper_No40.pdf</onlink>
+</citeinfo>
+</crossref>
+<crossref>
+<citeinfo>
+<origin>NOAA/National Weather Service, Office of Hydrology</origin>
+<pubdate>1973</pubdate>
+<title>NOAA Atlas 2, Precipitation-Frequency Atlas Of The Western United States</title>
+<geoform>document</geoform>
+<serinfo>
+<sername>NOAA Atlas 2</sername>
+<issue>Vol 11</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Silver Spring, MD, USA</pubplace>
+<publish>NOAA/National Weather Service, Office of Hydrology</publish>
+</pubinfo>
+<onlink>http://www.nws.noaa.gov/oh/hdsc/relevant_publications.html%232_section</onlink>
+</citeinfo>
+</crossref>
+<crossref>
+<citeinfo>
+<origin>U.S. Weather Bureau</origin>
+<pubdate>1964</pubdate>
+<title>Technical Paper 49, Two-to-Ten-Day Precipitation for Return Periods of 2 to 100 Years in the Contiguous United States (1964)</title>
+<geoform>document</geoform>
+<serinfo>
+<sername>TP49</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Silver Spring, MD, USA</pubplace>
+<publish>U.S. Weather Bureau</publish>
+</pubinfo>
+<onlink>http://www.nws.noaa.gov/oh/hdsc/PF_documents/TechnicalPaper_No49.pdf</onlink>
+</citeinfo>
+</crossref>
+</idinfo>
+<dataqual>
+<attracc>
+<attraccr>All attributes created were tested for internal consistency. In addition, thorough comparisons were conducted with NOAA Atlas 2 Volume 11, TP40, and TM Hydro35.</attraccr>
+</attracc>
+<logic>All data were based on precipitation-reporting stations that had at least 20 years of hourly, and/or 30 years of daily precipitation data between 1836 and 2013. Similar quality assurance procedures were used with all input data sets.</logic>
+<complete>Observed point precipitation values originated from a variety of sources. All station data were subjected to quality control checks by the National Climatic Data Center (NCDC) and the National Weather Service.</complete>
+<lineage>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>National Climatic Data Center (NCDC)</origin>
+<pubdate>2011</pubdate>
+<title>15-minute Precipitation Data (DSI-3260)</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>DSI-3260</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Asheville, NC</pubplace>
+<publish>National Climatic Data Center (NCDC)</publish>
+</pubinfo>
+<onlink>http://lwf.ncdc.noaa.gov/oa/ncdc.html</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19700801</begdate>
+<enddate>20101231</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>NOAA National Climatic Data Center (NCDC) ArcGIS Services, http://www.climate.gov/#dataServices,20101231</srccitea>
+<srccontr>15-minute precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>National Climatic Data Center (NCDC)</origin>
+<pubdate>2011</pubdate>
+<title>Hourly Precipitation Data (DSI-3240)</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>DSI-3240</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Asheville, NC</pubplace>
+<publish>National Climatic Data Center (NCDC)</publish>
+</pubinfo>
+<onlink>http://cdo.ncdc.noaa.gov/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19490701</begdate>
+<enddate>20101231</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>NCDC Climate Data Online -Precipitation Data, Hourly, http://www.climate.gov/#dataServices, 20101231</srccitea>
+<srccontr>hourly precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>National Climatic Data Center (NCDC)</origin>
+<pubdate>2011</pubdate>
+<title>U.S. Daily Surface Data (DSI-3200, DSI-3202, DSI-3206, DSI-3210)</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>DSI-3200, DSI-3202, DSI-3206, DSI-3210</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Asheville, NC</pubplace>
+<publish>National Climatic Data Center (NCDC)</publish>
+</pubinfo>
+<onlink>http://lwf.ncdc.noaa.gov/oa/ncdc.html</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>18400301</begdate>
+<enddate>20111031</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>NOAA National Data Center (NCDC) Online Store, http://www.climate.gov/#dataServices, 20110531</srccitea>
+<srccontr>daily precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Kansas Department of Transportation</origin>
+<pubdate>Unknown</pubdate>
+<title>ALERT Precipitation Data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>City of Overland Park, Kansas</pubplace>
+<publish>Kansas Department of Transportation</publish>
+</pubinfo>
+<onlink>http://www.stormwatch.com</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19990901</begdate>
+<enddate>20081231</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Kansas Department of Transportation ALERT data, www.stormwatch.com ,20090131</srccitea>
+<srccontr>alert precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Commercial Agriculture Automated Weather Station Network (CAAWSN),University of Missouri Extension</origin>
+<pubdate>2009</pubdate>
+<title>Hourly Precipitation Data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Missouri</pubplace>
+<publish>University of Missouri Extension</publish>
+</pubinfo>
+</citeinfo>
+</srccite>
+<typesrc>http://agebb.missouri.edu/weather/history/indexNOAA.asp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>18900101</begdate>
+<enddate>20091031</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Commercial Agriculture Automated Weather Station Network (CAAWSN), http://agebb.missouri.edu/weather/history/indexNOAA.asp, 20091131</srccitea>
+<srccontr>hourly precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Environment Canada</origin>
+<pubdate>Unknown</pubdate>
+<title>DLY04 dataset and HLY03 dataset precipitation information</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Canada</pubplace>
+<publish>EC</publish>
+</pubinfo>
+<onlink>http://www.weatheroffice.gc.ca/canada_e.html</onlink>
+</citeinfo>
+</srccite>
+<typesrc>Daily and hourly precipitation information</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19400101</begdate>
+<enddate>20061231</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Environment Canada. http://www.weatheroffice.gc.ca/canada_e.html. 20090930.</srccitea>
+<srccontr>Daily and hourly precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Colorado Climate Center,Colorado Agricultural Meteorological Network (CoAgMet)</origin>
+<pubdate>Unknown</pubdate>
+<title>hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Fort Collins, CO</pubplace>
+<publish>Colorado State University, Colorado Climate Center</publish>
+</pubinfo>
+<onlink>http://climate.colostate.edu/%7Ecoagmet/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19920201</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Colorado Climate Center. http://climate.colostate.edu/~coagmet/.20090731.</srccitea>
+<srccontr>hourly precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>U.S. Army Corps of Engineers (USACE)</origin>
+<pubdate>2009</pubdate>
+<title>Hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>St. Louis, MO</pubplace>
+<publish>U.S. Army Corps of Engineers</publish>
+</pubinfo>
+<onlink>http://www.mvs.usace.army.mil/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>email</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19961201</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>U.S. Army Corps of Engineers. Hourly precipitation.July 2009.Email.</srccitea>
+<srccontr>hourly precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Fountain Creek Watershed, City of Colorado Springs</origin>
+<pubdate>2011</pubdate>
+<title>Hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Colorado Springs, CO</pubplace>
+<publish>Fountain Creek Watershed Food Control and Greenway District</publish>
+</pubinfo>
+<onlink>http://www.fountain-crk.org/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19480801</begdate>
+<enddate>20060930</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Fountain Creek Watershed District. http://www.fountain-crk.org. 20110211.</srccitea>
+<srccontr>hourly precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Minnesota Department of Natural Resources, State Climatology Office</origin>
+<pubdate>2009</pubdate>
+<title>Daily precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>St. Paul, MN 55108</pubplace>
+<publish>Minnesota State Climatology Office</publish>
+</pubinfo>
+<onlink>http://climate.umn.edu/doc/historical.htm</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19580701</begdate>
+<enddate>20090131</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>MN DNR.Daily precipitation. http://climate.umn.edu/doc/historical.htm.200910.</srccitea>
+<srccontr>daily precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>High Plains Regional Climate Center (HPRCC)</origin>
+<pubdate>2009</pubdate>
+<title>Daily and Hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Lincoln, NE 68508</pubplace>
+<publish>High Plains Regional Climate Center (HPRCC)</publish>
+</pubinfo>
+<onlink>http://www.hprcc.unl.edu/awdn/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19810501</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>HPRCC. http://www.hprcc.unl.edu/awdn/.July 2009.</srccitea>
+<srccontr>daily and hourly precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Midwestern Region Climate Center (MRCC)</origin>
+<pubdate>Unknown</pubdate>
+<title>19th Century Forts and Voluntary Observers Database daily data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Champaign, IL 61820</pubplace>
+<publish>Midwestern Region Climate Center (MRCC)</publish>
+</pubinfo>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>18360701</begdate>
+<enddate>18961130</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>MRCC. http://mrcc.isws.illinois.edu/prod_serv/prodserv.htm. September 2011.</srccitea>
+<srccontr>daily precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Michigan Automated Weather Network (MAWN)</origin>
+<pubdate>2009</pubdate>
+<title>5-minute precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>East Lansing, Michigan, 48824</pubplace>
+<publish>Michigan State University, Michigan Automated Weather Network(MAWN)</publish>
+</pubinfo>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19960101</begdate>
+<enddate>20090228</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>MAWN. http://www.agweather.geo.msu.edu/mawn/. February 2009.</srccitea>
+<srccontr>5-minute precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Illinois State Water Survey</origin>
+<pubdate>Unknown</pubdate>
+<title>National Atmospheric Deposition Program (NADP), Daily precipitation data, tabular digital data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Champaign, IL 61820</pubplace>
+<publish>National Atmospheric Deposition Program (NADP)</publish>
+</pubinfo>
+<onlink>https://nadp.isws.illinois.edu/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19780701</begdate>
+<enddate>20090430</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>National Atmospheric Deposition Program. https://nadp.isws.illinois.edu/. October 2009.</srccitea>
+<srccontr>daily precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Northern Colorado Water Conservancy District (NCWCD)</origin>
+<pubdate>Unknown</pubdate>
+<title>Weather Station Network daily precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Berthoud, CO 80513</pubplace>
+<publish>Northern Colorado Water Conservancy District (NCWCD)</publish>
+</pubinfo>
+<onlink>http://www.northernwater.org/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19960101</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Northern Colorado Water Conservancy District (NCWCD). Daily precipitation data. July 2009</srccitea>
+<srccontr>daily precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Oklahoma Climatological Survey (OCS), Oklahoma Mesonet</origin>
+<pubdate>2009</pubdate>
+<title>Daily and Hourly precipitation data, tabular digital data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Norman, OK 73072</pubplace>
+<publish>Oklahoma Climatological Survey</publish>
+</pubinfo>
+<onlink>http://www.mesonet.org</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19940101</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Oklahoma Mesonet.Hourly and daily precipitation data.http://www.mesonet.org/.March 2009.</srccitea>
+<srccontr>daily and hourly precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>North Dakota State Climate Office, North Dakota State University</origin>
+<pubdate>Unknown</pubdate>
+<title>North Dakota Agricultural Weather Network, daily and hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Fargo, ND 58108</pubplace>
+<publish>North Dakota State Climate Office, North Dakota State University</publish>
+</pubinfo>
+<onlink>http://ndawn.ndsu.nodak.edu/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19900701</begdate>
+<enddate>20091231</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>North Dakota State Climate Office. North Dakota Agricultural Weather Network.March 2009.</srccitea>
+<srccontr>daily and hourly precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>North Dakota State Water Commission (NDSWC)</origin>
+<pubdate>Unknown</pubdate>
+<title>Daily precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Bismarck, ND 58505</pubplace>
+<publish>North Dakota State Water Commission (NDSWC)</publish>
+</pubinfo>
+<onlink>http://www.swc.state.nd.us/4dlink9/4dcgi/redirect/index.html</onlink>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19770401</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>North Dakota State Water Commission (NDSWC). Daily Precipitation Network. July 2009.</srccitea>
+<srccontr>daily precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Remote Automated Weather Stations (RAWS)</origin>
+<pubdate>Unknown</pubdate>
+<title>RAWS hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Reno, Nevada 89512</pubplace>
+<publish>U.S. Forest Service, National Wildfire Coordinating Group (NWCG), and Western Regional Climate Center (WRCC)</publish>
+</pubinfo>
+<onlink>http://raws.fam.nwcg.gov/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19830601</begdate>
+<enddate>20111031</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Hourly Remote Automated Weather Stations (RAWS) data. National Wildfire Coordinating Group (NWCG). http://raws.fam.nwcg.gov/. April 2011.</srccitea>
+<srccontr>hourly precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Southeast Michigan Council of Governments (SEMCOG)</origin>
+<pubdate>Unknown</pubdate>
+<title>SEMCOG hourly precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>East Lansing, Michigan, 48824</pubplace>
+<publish>Michigan State Climatologist's Office</publish>
+</pubinfo>
+<onlink>http://climate.geo.msu.edu/Semcog/SEM/mainsem.html</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19880101</begdate>
+<enddate>20050630</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>Michigan State Climatologist's Office. SEMCOG hourly precipitation data.April 2010.</srccitea>
+<srccontr>SEMCOG hourly precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>Natural Resources Conservation Service, SNOTEL</origin>
+<pubdate>Unknown</pubdate>
+<title>Daily precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Portland, Oregon 97232-1274</pubplace>
+<publish>Natural Resources Conservation Service</publish>
+</pubinfo>
+<onlink>http://www.wcc.nrcs.usda.gov/snow/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19781001</begdate>
+<enddate>20080930</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>NRCS. http://www.wcc.nrcs.usda.gov/snow/.July 2009.</srccitea>
+<srccontr>daily precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>US Bureau of Reclamation (USBR), Great Plains Region: automated hydrologic and meteorologic monitoring  (Hydromet) network</origin>
+<pubdate>Unknown</pubdate>
+<title>Hydromet daily precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Billings, MT 59101</pubplace>
+<publish>US Bureau of Reclamation (USBR), Great Plains Region</publish>
+</pubinfo>
+<onlink>http://www.wcc.nrcs.usda.gov/snow/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>electronic mail system</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19661001</begdate>
+<enddate>20090430</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>US Bureau of Reclamation (USBR), Great Plains Region. http://www.usbr.gov/gp/hydromet/. May 2009.</srccitea>
+<srccontr>Hydromet daily precipitation information</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>U.S. Geological Survey (USGS): National Water Information System dataset</origin>
+<pubdate>Unknown</pubdate>
+<title>Daily precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Reston, VA 20192</pubplace>
+<publish>U.S. Geological Survey (USGS)</publish>
+</pubinfo>
+<onlink>http://waterdata.usgs.gov/nwis/</onlink>
+</citeinfo>
+</srccite>
+<typesrc>online</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>18711001</begdate>
+<enddate>20090731</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>U.S. Geological Survey (USGS). Daily data.August 2009.</srccitea>
+<srccontr>daily precipitation data</srccontr>
+</srcinfo>
+<srcinfo>
+<srccite>
+<citeinfo>
+<origin>South Dakota Water Science Center , U.S. Geological Survey (USGS)</origin>
+<pubdate>Unknown</pubdate>
+<title>15-minute precipitation data</title>
+<geoform>tabular digital data</geoform>
+<serinfo>
+<sername>None</sername>
+<issue>None</issue>
+</serinfo>
+<pubinfo>
+<pubplace>Rapid City, SD 57702</pubplace>
+<publish>South Dakota Water Science Center , U.S. Geological Survey (USGS)</publish>
+</pubinfo>
+</citeinfo>
+</srccite>
+<typesrc>ftp</typesrc>
+<srctime>
+<timeinfo>
+<rngdates>
+<begdate>19931001</begdate>
+<enddate>20101231</enddate>
+</rngdates>
+</timeinfo>
+<srccurr>ground condition</srccurr>
+</srctime>
+<srccitea>South Dakota Water Science Center , U.S. Geological Survey (USGS). 15-min data.August 2009.</srccitea>
+<srccontr>15-minute precipitation data</srccontr>
+</srcinfo>
+<procstep>
+<procdesc>Datasets</procdesc>
+<procdate>Unknown</procdate>
+</procstep>
+</lineage>
+</dataqual>
+<spdoinfo>
+<indspref>This spatial dataset was prepared by spatially interpolating point precipitation frequency estimates.   Precipitation magnitude-frequency relationships at individual stations were computed using a regional frequency analysis approach based on L-moment statistics.  Frequency analyses were carried out on annual maximum series (AMS) for a range of durations between 15 minutes and 60 days.  Frequency estimates based on partial duration series (PDS) were developed from AMS data using a formula that allows for conversion between AMS and PDS frequencies. Precipitation frequency estimates at sub-hourly durations were derived from corresponding hourly estimates using scaling factors. To assess the uncertainty in estimates, 90% confidence intervals were constructed on AMS and PDS frequency curves. The spatial interpolation approach utilizes the inherently strong linear relationship that exists between mean annual maxima and precipitation frequency estimates for the 2-year average recurrence interval (ARI), as well as between precipitation frequency estimates for consecutive ARIs. Mean annual maximum (MAM) grids for each duration that served as the basis for deriving gridded precipitation frequency estimates at different frequencies were interpolated at 30 arc-seconds resolution using a hybrid statistical-geographic approach for mapping climate data named Parameter-elevation Regressions on Independent Slopes Model (PRISM) developed by Oregon State University&#146;s PRISM Climate Group.  For more details about the processes used to prepare gridded estimates, please see corresponding NOAA Atlas 14 Document.</indspref>
+<direct>Raster</direct>
+<rastinfo>
+<cvaltype>integer</cvaltype>
+<rasttype>Grid Cell</rasttype>
+<rowcount>3239</rowcount>
+<colcount>1935</colcount>
+<vrtcount>1</vrtcount>
+</rastinfo>
+</spdoinfo>
+<spref>
+<horizsys>
+<geograph>
+<latres>0.00833333</latres>
+<longres>0.00833333</longres>
+<geogunit>Decimal degrees</geogunit>
+</geograph>
+<geodetic>
+<horizdn>North American Datum of 1983</horizdn>
+<ellips>Geodetic Reference System 80</ellips>
+<semiaxis>6378137.000000</semiaxis>
+<denflat>298.257222</denflat>
+</geodetic>
+</horizsys>
+</spref>
+<eainfo>
+<detailed>
+<enttyp>
+<enttypl>precipitation frequency grid cell value</enttypl>
+<enttypd>ASCII integer</enttypd>
+<enttypds>Self-evident</enttypds>
+</enttyp>
+<attr>
+<attrlabl>precipitation frequency grid cell value</attrlabl>
+<attrdef>gridded precipitation frequency estimates</attrdef>
+<attrdefs>NWS/OHD/HDSC</attrdefs>
+<attrdomv>
+<udom>Sequential unique whole numbers that are automatically generated.</udom>
+</attrdomv>
+</attr>
+<attr>
+<attrlabl>Value</attrlabl>
+<attrdef>Feature geometry. Grid cell precipitation in inches*1000</attrdef>
+<attrdefs>HDSC</attrdefs>
+<attrdomv>
+<rdom>
+<rdommin>0</rdommin>
+<rdommax>9999999</rdommax>
+<attrunit>1000ths of inches; -9 is missing</attrunit>
+</rdom>
+</attrdomv>
+<attrvai>
+<attrva>.01</attrva>
+<attrvae>measurement accuracy of precipitation gauges in inches</attrvae>
+</attrvai>
+</attr>
+</detailed>
+</eainfo>
+<distinfo>
+<distrib>
+<cntinfo>
+<cntorgp>
+<cntorg>NOAA/NWS/OHD/Hydrometeorological Design Studies Center</cntorg>
+</cntorgp>
+<cntaddr>
+<addrtype>mailing address</addrtype>
+<address>NOAA/NWS/Office of Hydrologic Development</address>
+<address>SSMC2, W/OHD 12</address>
+<address>1325 East-West Highway</address>
+<city>Silver Spring</city>
+<state>MD</state>
+<postal>20910</postal>
+<country>USA</country>
+</cntaddr>
+</cntinfo>
+</distrib>
+<resdesc>Downloadable data.</resdesc>
+<distliab>Users must assume responsibility to determine the appropriate use of these data.</distliab>
+<stdorder>
+<digform>
+<digtinfo>
+<formname>ASCII</formname>
+<transize>74.0</transize>
+</digtinfo>
+<digtopt>
+<onlinopt>
+<computer>
+<networka>
+<networkr>HDSC PFDS;</networkr>
+<networkr>mwXyrYY (X = return period, YY = duration; u = upper limit, l= lower limit) for partial duration series, _ams for annual maximum series</networkr>
+</networka>
+</computer>
+<accinstr>Web download</accinstr>
+</onlinopt>
+</digtopt>
+</digform>
+<fees>None</fees>
+</stdorder>
+<techpreq>A grid- or raster-based GIS, such as ArcInfo (GRID) or Arcview 3.x/8.x/9.x/10.x (with Spatial Analyst Extension). The grids can however be converted into GRASS ASCII grids by manipulating the header.</techpreq>
+</distinfo>
+<metainfo>
+<metd>20130415</metd>
+<metc>
+<cntinfo>
+<cntorgp>
+<cntorg>NOAA/NWS/OHD/Hydrometeorological Design Studies Center</cntorg>
+</cntorgp>
+<cntpos>N/A</cntpos>
+<cntaddr>
+<addrtype>mailing address</addrtype>
+<address>NOAA/NWS/Office of Hydrologic Development</address>
+<address>SSMC2, W/OHD 12</address>
+<address>1325 East-West Highway</address>
+<city>Silver Spring</city>
+<state>MD</state>
+<postal>20910</postal>
+<country>USA</country>
+</cntaddr>
+<cntemail>hdsc.questions@noaa.gov</cntemail>
+<hours>9 a.m. to 5 p.m. Eastern, Monday-Friday</hours>
+</cntinfo>
+</metc>
+<metstdn>FGDC Content Standard for Digital Geospatial Metadata</metstdn>
+<metstdv>FGDC-STD-012-2002</metstdv>
+<mettc>local time</mettc>
+</metainfo>
+</metadata>
