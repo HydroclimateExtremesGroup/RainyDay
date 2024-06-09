@@ -1218,8 +1218,8 @@ if CreateCatalog:
     caty=caty[sind]    
     catmax=catmax[sind]/mnorm*rainprop.timeres/60.
     # we might need something here that catches instances when NSTORMS is big, but the actual amount of data fed in isn't enough to find that many storms. This produced problems for me.
-    if os.path.exists(fullpath + '/Stormcatalog'):
-        shutil.rmtree(fullpath + '/Stormcatalog')
+    if os.path.exists(fullpath + '/StormCatalog'):
+        shutil.rmtree(fullpath + '/StormCatalog')
     os.mkdir(fullpath + '/StormCatalog')
     
     # This part saves each storm as single file #
