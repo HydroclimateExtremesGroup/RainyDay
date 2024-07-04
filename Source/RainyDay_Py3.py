@@ -2114,9 +2114,10 @@ if FreqAnalysis:
                 maxpass=np.nansum(catrain[j:j+int(duration*60./rainprop.timeres),:],axis=0)
                 
                 if domain_type.lower()=='irregular':
-                    maxtemp,tempy,tempx=RainyDay.catalogNumba_irregular(maxpass,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask)   
+                    maxpass = maxpass * domainmask
+                    maxtemp,tempy,tempx=RainyDay.catalogNumba_irregular(maxpass,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
                 else:
-                    maxtemp,tempy,tempx=RainyDay.catalogNumba(maxpass,trimmask,xlen,ylen,maskheight,maskwidth,rainsum)                       
+                    maxtemp,tempy,tempx=RainyDay.catalogNumba(maxpass,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
      
                 if maxtemp>dur_max:
                     dur_max=maxtemp
