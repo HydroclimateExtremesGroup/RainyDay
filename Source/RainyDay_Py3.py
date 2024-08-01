@@ -1907,6 +1907,8 @@ if FreqAnalysis:
     
     
     # DOES THIS PROPERLY HANDLE STORM EXCLUSIONS???  I think so...
+    for i in range(0, np.nanmax(ncounts)):
+        whichstorms[i, ncounts >= i + 1] = np.random.randint(0, nstorms, (len(ncounts[ncounts >= i + 1])))  # why was this previously "nstorms-1"??? Bug
     # added 2/6/2024 DBW to support seasonally-dependent sampling
     if seasonalsampling:
         cat_doy=np.zeros((2*cattime.shape[0]),dtype='datetime64[m]')
@@ -1932,11 +1934,6 @@ if FreqAnalysis:
             # find the storm that is closest to the randomly-sampled date:
             absolute_diff = np.abs(closest_date[:, np.newaxis] - cat_doy)
             closest_storm = np.argmin(absolute_diff, axis=1)
-                 
-        
-    else:
-        for i in range(0,np.nanmax(ncounts)):
-            whichstorms[i,ncounts>=i+1]=np.random.randint(0,nstorms,(len(ncounts[ncounts>=i+1]))) # why was this previously "nstorms-1"??? Bug
     
     # the next three lines were commented out when adding the "pointlist" option
     #whichrain=np.zeros((whichstorms.shape),dtype='float32')
