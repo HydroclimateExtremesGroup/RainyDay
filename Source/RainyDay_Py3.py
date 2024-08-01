@@ -52,8 +52,8 @@ import pandas as pd
 # plotting stuff, really only needed for diagnostic plots
 #matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import RainyDay_functions as RainyDay
-# import RainyDay_utilities_Py3.RainyDay_functions as RainyDay
+# import RainyDay_functions as RainyDay
+import RainyDay_utilities_Py3.RainyDay_functions as RainyDay
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -1146,7 +1146,7 @@ if CreateCatalog:
     #print(parameterfile_json)
     proc_start = time.time()
     for i in filerange:
-        # startpc = time.time()
+        startpc = time.time()
         infile=flist[i]
         # startrd = time.time()
         inrain,intime=RainyDay.readnetcdf(infile,variables,inarea, dropvars =droplist)
@@ -1202,7 +1202,7 @@ if CreateCatalog:
             rainarray[0:-1,:]=rainarray[1:int(catduration*60/rainprop.timeres),:]
             raintime[0:-1]=raintime[1:int(catduration*60/rainprop.timeres)] 
         endpc = time.time()
-        # print('overall time:', endpc-startpc)
+        print('overall time:', endpc-startpc)
     # proc_end = time.time()
     # print(f"catalog timer: {(proc_end-proc_start)/60.:0.2f} minutes")
 #%%
@@ -1493,7 +1493,7 @@ pltkernel=pltkernel/np.nansum(pltkernel)
 tempmask=deepcopy(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
 
 if transpotype=='uniform':
-    tempsum=np.nansum(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
+    tempsum=np.nansum(tempmask)
     temparr=np.arange(1.,tempsum+1.)/tempsum
     tempmask[np.equal(tempmask,0.)]=np.nan
     tempmask[~np.isnan(tempmask)]=temparr
@@ -1862,7 +1862,7 @@ if DoDiagnostics:
 if FreqAnalysis:
     print("resampling and transposing...")
     
-    if np.all(includeyears==False):
+    if includeyears==False:
         nyears=len(np.unique(cattime[:,-1].astype('datetime64[Y]')))
     else:
         nyears=len(includeyears)
@@ -1873,7 +1873,6 @@ if FreqAnalysis:
         #lrate=len(catmax)/nyears*FrequencySens 
         lrate=len(catmax)/nyears        
         ncounts=np.random.poisson(lrate,(nsimulations,nrealizations))
-        cntr=0
         #ncounts[ncounts==0]=1
         if calctype.lower()=='npyear' and lrate<nperyear:   
             sys.exit("You specified to write multiple storms per year, but you specified a number that is too large relative to the resampling rate!")
@@ -1908,11 +1907,8 @@ if FreqAnalysis:
     
     
     # DOES THIS PROPERLY HANDLE STORM EXCLUSIONS???  I think so...
-    for i in range(0,np.nanmax(ncounts)):
-        whichstorms[i,ncounts>=i+1]=np.random.randint(0,nstorms,(len(ncounts[ncounts>=i+1]))) # why was this previously "nstorms-1"??? Bug?
     # added 2/6/2024 DBW to support seasonally-dependent sampling
     if seasonalsampling:
-        _,_,_,_,_,_,_,_,_,cattime,_ = RainyDay.readcatalog(stormlist[0])
         cat_doy=np.zeros((2*cattime.shape[0]),dtype='datetime64[m]')
         
         # convert the starting time of each storm into the same date of an arbitrary year that matches the seasonal sampling probabilities
@@ -2610,12 +2606,13 @@ if FreqAnalysis:
     else:
         if spreadtype=='ensemble':
             spreadmin=np.nanmin(sortrain,axis=1)
-            spreadmax=np.nanmax(sortrain,axis=1)    
+            spreadmax=np.nanmax(sortrain,axis=1)
+            spreadmean=np.nanmean(sortrain,1)
         else:
             spreadmin=np.percentile(sortrain,(100-quantilecalc)/2,axis=1)
             spreadmax=np.percentile(sortrain,quantilecalc+(100-quantilecalc)/2,axis=1)
     
-        freqanalysis=np.column_stack((exceedp,returnperiod,spreadmin,np.nanmean(sortrain,1),spreadmax))
+        freqanalysis=np.column_stack((exceedp,returnperiod,spreadmin,spreadmean,spreadmax))
         
         np.savetxt(FreqFile,freqanalysis,delimiter=',',header='prob.exceed,returnperiod,minrain,meanrain,maxrain',fmt='%6.2f',comments='')
         
@@ -2721,7 +2718,7 @@ if FreqAnalysis:
                 stormindex[:]=-999
                 stormindex[whichstorms==i]=np.arange(0,howmanystorms)    # this will assign a unique identifier to each transposed storm based on parent storm i
                 for k in np.arange(0,howmanystorms):
-                    tstorm,tyear,trealization=np.where(stormindex==k)
+                    tstorm,tyear,trealization=np.where(stormindex==k)    ####tstorm is not the original storm number here but "i" is.
                     outx=writex[stormindex==k]
                     outy=writey[stormindex==k]
                     
