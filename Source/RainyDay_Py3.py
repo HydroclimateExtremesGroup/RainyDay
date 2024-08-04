@@ -188,23 +188,6 @@ else:
 #         if exc.errno != 17:   ### This checks the file exist error. '17' this is for file exist error.
 #             raise
 #         pass
-# if you are reusing a storm catalog, identify all the associated files and create a list of them:
-if CreateCatalog==False:
-    stormlist = glob.glob(fullpath+'/StormCatalog/'+catalogname + '*' + '.nc')
-    stormlist = sorted(stormlist, key=lambda path: RainyDay.extract_storm_number(path, catalogname))
-    if os.path.isfile(stormlist[0])==False:
-        sys.exit("You need to create a storm catalog first.")
-    else:
-        print("Reading an existing storm catalog!")
-        catrain,stormtime,latrange,lonrange,catx,caty,catmax,catmask,domainmask,cattime,timeres=RainyDay.readcatalog(stormlist[0])
-        yres=np.abs(latrange.diff(dim='latitude')).mean()
-        xres=np.abs(lonrange.diff(dim='longitude')).mean()
-        catarea=[lonrange[0],lonrange[-1]+xres,latrange[-1]-yres,latrange[0]]
-        if np.isclose(xres,yres,atol=1e-5)==False:
-            sys.exit('RainyDay currently only supports equal x and y resolutions!')
-        else:
-            res=np.min([yres,xres])
-
 try:
     nstorms=cardinfo["NSTORMS"]
     defaultstorms=False
@@ -213,6 +196,27 @@ except Exception:
     #nstorms=100
     print("you didn't specify NSTORMS, defaulting to 20 per year, or whatever is in the catalog!")
     defaultstorms=True
+
+# if you are reusing a storm catalog, identify all the associated files and create a list of them:
+if CreateCatalog==False:
+    stormlist = glob.glob(fullpath+'/StormCatalog/'+catalogname + '*' + '.nc')
+    stormlist = sorted(stormlist, key=lambda path: RainyDay.extract_storm_number(path, catalogname))
+    if os.path.isfile(stormlist[0])==False:
+        sys.exit("You need to create a storm catalog first.")
+    else:
+        print("Reading an existing storm catalog!")
+        catrain,stormtime,latrange,lonrange,catx,caty,catmax,catmask,domainmask,cattime,timeres=RainyDay.readcatalog(stormlist[-1])
+        yres=np.abs(latrange.diff(dim='latitude')).mean()
+        xres=np.abs(lonrange.diff(dim='longitude')).mean()
+        catarea=[lonrange[0],lonrange[-1]+xres,latrange[-1]-yres,latrange[0]]
+        if np.isclose(xres,yres,atol=1e-5)==False:
+            sys.exit('RainyDay currently only supports equal x and y resolutions!')
+        else:
+            res=np.min([yres,xres])
+
+    if len(stormlist) > nstorms:
+        print(f"The number of storms is lesser than in the strom catalog, diagnostic plotting, frquency analysis and scenarios will be created only for top {nstorms} storms")
+        catx,caty,catmax,cattime,stormlist = catx[-nstorms:],caty[-nstorms:],catmax[-nstorms:],cattime[-nstorms:,],stormlist[-nstorms:]
 
 try:
     nsimulations=cardinfo["NYEARS"]
@@ -1318,7 +1322,8 @@ try:
             if storms in [RainyDay.extract_storm_number(storm, catalogname) for storm in stormlist]:
                 continue
             else:
-                sys.exit("something seems wrong! You are excluding storms that aren't in the catalog.")
+                sys.exit("something seems wrong! You are excluding storms that aren't in the catalog. Give the exact storm number if you are excluding storm and also nstorm is less than "\
+                 "the original storm")
 except Exception:
     exclude=[]
 
@@ -2674,13 +2679,41 @@ if FreqAnalysis:
         subrangelon=np.array(lonrange[xmin:xmax+1])
         minind=RainyDay.find_nearest(returnperiod,RainfallThreshYear)
         
-        sortind=np.argsort(whichrain[:,:,:,0],axis=0)
-        whichrain=np.take_along_axis(np.squeeze(whichrain),sortind,axis=0)
-        whichstorms=np.take_along_axis(np.squeeze(whichstorms),sortind,axis=0)
-        
-        whichx=np.take_along_axis(np.squeeze(whichx),sortind,axis=0)
-        whichy=np.take_along_axis(np.squeeze(whichy),sortind,axis=0)
-        
+        # sortind=np.argsort(whichrain[:,:,:,0],axis=0)
+        # whichrain=np.take_along_axis(np.squeeze(whichrain),sortind,axis=0)
+        # whichstorms=np.take_along_axis(np.squeeze(whichstorms),sortind,axis=0)
+        #
+        # whichx=np.take_along_axis(np.squeeze(whichx),sortind,axis=0)
+        # whichy=np.take_along_axis(np.squeeze(whichy),sortind,axis=0)
+
+        # Get sorting indices based on the first channel of whichrain along the first axis
+        sortind_first_axis = np.argsort(whichrain[:, :, :, 0], axis=0)
+
+        # Sort all arrays along the first axis
+        whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain), sortind_first_axis, axis=0)
+        whichstorms_sorted_first = np.take_along_axis(np.squeeze(whichstorms), sortind_first_axis, axis=0)
+        whichx_sorted_first = np.take_along_axis(np.squeeze(whichx), sortind_first_axis, axis=0)
+        whichy_sorted_first = np.take_along_axis(np.squeeze(whichy), sortind_first_axis, axis=0)
+
+        # Get sorting indices based on the first channel of whichrain_sorted_first along the second axis
+        sortind_second_axis = np.argsort(whichrain_sorted_first[-1, :, :],axis=0)
+
+        # Sort all arrays along the second axis
+        for i in range(whichrain_sorted_first.shape[0]):
+            for j in range(whichrain_sorted_first.shape[2]):
+                whichrain_sorted_first[i, :, j] = whichrain_sorted_first[i, sortind_second_axis[:,j], j]
+                whichstorms_sorted_first[i, :, j] = whichstorms_sorted_first[i, sortind_second_axis[:,j], j]
+                whichx_sorted_first[i, :, j] = whichx_sorted_first[i, sortind_second_axis[:,j], j]
+                whichy_sorted_first[i, :, j] = whichy_sorted_first[i, sortind_second_axis[:,j], j]
+
+        # Optionally, replace the original arrays with the sorted ones
+        whichrain = whichrain_sorted_first
+        whichstorms = whichstorms_sorted_first
+        whichx = whichx_sorted_first
+        whichy = whichy_sorted_first
+
+
+
         whichstorms=whichstorms[-nperyear:,minind:,:]
         writex=whichx[-nperyear:,minind:,:]
         writey=whichy[-nperyear:,minind:,:]
@@ -2721,7 +2754,7 @@ if FreqAnalysis:
                     
                     name_scenariofile=fullpath+'/Realizations/Realization'+str(trealization[0]+1)+'/scenario_'+scenarioname+'_rlz'+str(trealization[0]+1)+'year'+str(tyear[0]+1)+'storm'+str(tstorm[0]+1)+'.nc'
                     #outrain=RainyDay.SSTspin_write_v2(catrain,np.squeeze(writex[:,rlz]),np.squeeze(writey[:,rlz]),np.squeeze(writestorm[:,rlz]),nanmask,maskheight,maskwidth,precat,cattime[:,-1],rainprop,spin=prependrain,flexspin=False,samptype=transpotype,cumkernel=cumkernel,rotation=rotation,domaintype=domain_type)
-                    RainyDay.writescenariofile(catrain,raintime,outx,outy,name_scenariofile,tstorm[0],tyear[0],trealization[0],maskheight,maskwidth,subrangelat,subrangelon,scenarioname,writemask)
+                    RainyDay.writescenariofile(catrain,raintime,outx,outy,name_scenariofile,i,tyear[0],trealization[0],maskheight,maskwidth,subrangelat,subrangelon,scenarioname,writemask)
     
     
     

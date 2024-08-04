@@ -1631,7 +1631,7 @@ def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstor
     #transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
     transposedrain=catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)]
     
-    description_string='RainyDay storm scenario file for storm '+str(tstorm)+', year '+str(tyear)+', realization '+str(trealization)+', created from ' + scenarioname
+    description_string='RainyDay storm scenario file for original storm '+str(tstorm)+', year '+str(tyear)+', realization '+str(trealization)+', created from ' + scenarioname
     latitudes_units,longitudes_units = 'degrees_north', 'degrees_east'
     rainrate_units = 'mm hr^-1'
     times_units, times_calendar = 'minutes since 1970-01-01 00:00.0' , 'gregorian'
