@@ -214,9 +214,6 @@ if CreateCatalog==False:
         else:
             res=np.min([yres,xres])
 
-    if len(stormlist) > nstorms:
-        print(f"The number of storms is lesser than in the strom catalog, diagnostic plotting, frquency analysis and scenarios will be created only for top {nstorms} storms")
-        catx,caty,catmax,cattime,stormlist = catx[-nstorms:],caty[-nstorms:],catmax[-nstorms:],cattime[-nstorms:,],stormlist[-nstorms:]
 
 try:
     nsimulations=cardinfo["NYEARS"]
@@ -1343,7 +1340,7 @@ else:
 # includestorms[np.isclose(catmax,0.)]=False   ## Do we need to check this
        
   
-modstormsno=origstormsno[includestorms]  
+modstormsno=origstormsno[includestorms]
 
 
 # EXCLUDE STORMS BY MONTH AND YEAR
@@ -1376,18 +1373,16 @@ else:
     nstorms_cat=len(stormlist)
 if nstorms<nstorms_cat:
     stormlist = stormlist[-nstorms:]
-    nstorms = len(stormlist)      
-# if nstorms<nstorms_cat:
-#     catrain=catrain[-nstorms:,:]       ###  Any suggestions here
-#     catmax=catmax[-nstorms:]
-#     catx=catx[-nstorms:]
-#     caty=caty[-nstorms:]
-#     cattime=cattime[-nstorms:,:]
-#     nstorms=np.shape(catx)[0]
-#     modstormsno=modstormsno[-nstorms:]   ### What are we doing here?
+    nstorms = len(stormlist)
+
+    catmax=catmax[-nstorms:]
+    catx=catx[-nstorms:]
+    caty=caty[-nstorms:]
+    cattime=cattime[-nstorms:,:]
+    modstormsno=modstormsno[-nstorms:]   ### What are we doing here?
 else:    
     nstorms= len(stormlist)
-    
+stormnumber = [RainyDay.extract_storm_number(storm, catalogname) for storm in stormlist]   ## We can use this variable somewhere.
 
 
 
@@ -2731,8 +2726,8 @@ if FreqAnalysis:
         #     writemultiplier=sortmultiplier[minind:,:]       
         
         for i in np.arange(0,nstorms):
-            print("writing scenarios for storm "+str(i+1))
-            catrain,raintime,_,_,rainlocx,rainlocy,_,_,_,_,_ = RainyDay.readcatalog(stormlist[i])
+            print("writing scenarios for storm "+str(i))
+            catrain,raintime,_,_,_,_,_,_,_,_,_ = RainyDay.readcatalog(stormlist[i])
             catrain = np.array(catrain)
             catrain[np.less(catrain,0.)]=np.nan
             if padscenarios>0:
