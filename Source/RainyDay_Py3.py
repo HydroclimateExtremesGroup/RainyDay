@@ -1142,22 +1142,19 @@ if CreateCatalog:
     # READ IN RAINFALL
     #==============================================================================
     filerange=range(0,len(flist))
-    #sys.exit("set back!!!")
-    #filerange=range(2759,2763)
-    #print(parameterfile_json)
+    idxes = RainyDay.find_indices(flist[0],inarea,variables)
     proc_start = time.time()
     for i in filerange:
         startpc = time.time()
         infile=flist[i]
-        # startrd = time.time()
-        inrain,intime=RainyDay.readnetcdf(infile,variables,inarea, dropvars =droplist)
-        # inrain,intime=RainyDay.readnetcdf(infile,variables,indices)
+        startrd = time.time()
+        inrain,intime=RainyDay.readnetcdf(infile,variables,idxes,dropvars =droplist)
         # endrd = time.time(); print("readnetcdf time:", endrd-startrd)
         
         #inrain=inrain[hourinclude,:]
         #intime=intime[hourinclude]
-        # inrain[inrain<0.]=np.nan
-        inrain = inrain.where(inrain >= 0, np.nan)
+        inrain[inrain<0.]=np.nan
+        # inrain = inrain.where(inrain >= 0, np.nan)
       
         print('Processing file '+str(i+1)+' out of '+str(len(flist))+' ('+"{0:0.0f}".format(100*(i+1)/len(flist))+'%): '+infile.split('/')[-1])
         
@@ -1165,20 +1162,19 @@ if CreateCatalog:
         for k in np.arange(0,len(intime)):     
             starttime=intime[k]-np.timedelta64(int(catduration*60.),'m')
             raintime[-1]=intime[k]
+            # stt = time.time()
             rainarray[-1,:]=inrain[k,:]
+            # ett = time.time();print(ett-stt)
             #rainarray[-1,:]=np.reshape(inrain[k,:],(rainprop.subdimensions[0],rainprop.subdimensions[1]))
             subtimeind=np.where(np.logical_and(raintime>starttime,raintime<=raintime[-1]))
             subtime=np.arange(raintime[-1],starttime,-timestep)[::-1]
             temparray=np.squeeze(np.nansum(rainarray[subtimeind,:],axis=1))
             
             if domain_type=='irregular':
-                temparray = temparray * domainmask
+                # temparray = temparray * domainmask
                 # startct = time.time()
                 rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
                 # rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask,stride=catalogstride)
-                # endct = time.time()
-                # print(endct - startct)
-                # print(rainmax)
             else:
                 rainmax,ycat,xcat=RainyDay.catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
                 
@@ -1224,8 +1220,7 @@ if CreateCatalog:
     os.mkdir(fullpath + '/StormCatalog')
     
     # This part saves each storm as single file #
-    # _,readtime = RainyDay.readnetcdf(flist[0],variables,indices)
-    _,readtime = RainyDay.readnetcdf(flist[0],variables,inarea,dropvars=droplist)
+    _,readtime = RainyDay.readnetcdf(flist[0],variables,idxes,dropvars=droplist)
     print("Writing Storm Catalog!")
     for i in range(nstorms):
         start_time = cattime[i,0]
@@ -1252,14 +1247,14 @@ if CreateCatalog:
                         stm_file = file
                         break
                 # stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,indices)
-                stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,inbounds=inarea,dropvars=droplist)
+                stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,idxes,dropvars=droplist)
             cind = np.where(stm_time == current_datetime)[0][0]
             catrain[k,:] = stm_rain[cind,:]
             current_datetime += rainprop.timeres 
             k += 1
         storm_time = np.datetime_as_string(start_time, unit='D').replace("-","")
         storm_name = fullpath +'/StormCatalog/' + catalogname+'_storm_'+str(i+1) +"_"+ storm_time+".nc"
-        print("Writing Storm "+ str(i+1) + " out of " + str(nstorms) )
+        print("Writing Storm "+ str(i+1) + " out of " + str(nstorms))
         try:
             RainyDay.writecatalog(scenarioname,catrain,\
                                   catmax,\
@@ -2726,7 +2721,7 @@ if FreqAnalysis:
         #     writemultiplier=sortmultiplier[minind:,:]       
         
         for i in np.arange(0,nstorms):
-            print("writing scenarios for storm "+str(i))
+            print("writing scenarios for storm "+str(i+1))
             catrain,raintime,_,_,_,_,_,_,_,_,_ = RainyDay.readcatalog(stormlist[i])
             catrain = np.array(catrain)
             catrain[np.less(catrain,0.)]=np.nan

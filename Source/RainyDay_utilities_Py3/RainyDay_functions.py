@@ -202,18 +202,18 @@ def catalogAlt_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rains
 #         y=i//xlen
 #         x=i-y*xlen
 #         # Ensure that the slice does not exceed the bounds of temparray
-#
-#         if np.any(np.equal(domainmask[y+halfheight, x:x+maskwidth], 1.)) and np.any(np.equal(domainmask[y:y+maskheight, x+halfwidth], 1.)):
-#             rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
-#
-#
-#         else:
-#             rainsum[y, x] = 0
-#
-#     #wheremax=np.argmax(rainsum)
-#     rmax=np.nanmax(rainsum)
-#     wheremax=np.where(np.equal(rainsum,rmax))
-#     return rmax, wheremax[0][0], wheremax[1][0]
+
+    #     if np.any(np.equal(domainmask[y+halfheight, x:x+maskwidth], 1.)) and np.any(np.equal(domainmask[y:y+maskheight, x+halfwidth], 1.)):
+    #         rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
+    #
+    #
+    #     else:
+    #         rainsum[y, x] = 0
+    #
+    # #wheremax=np.argmax(rainsum)
+    # rmax=np.nanmax(rainsum)
+    # wheremax=np.where(np.equal(rainsum,rmax))
+    # return rmax, wheremax[0][0], wheremax[1][0]
 
 @jit(nopython=True, fastmath =  True)
 def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
@@ -237,7 +237,7 @@ def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,m
 @jit(nopython=True,  fastmath =  True)
 def catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
     for y in range(0, int32(yloop)):
-        for x in range(0, int32(xloop),2):
+        for x in range(0, int32(xloop),stride):
 
             rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
 
@@ -1240,8 +1240,24 @@ def writemaximized(scenarioname,writename,outrain,writemax,write_ts,writex,write
         
 #     else:
 #         return np.array(outrain),outtime,np.array(outlatitude),np.array(outlongitude)
-    
-def readnetcdf(rfile,variables,inbounds=False,dropvars=False,setup=False):
+def find_indices(rfile,inarea,variables):
+    ds = Dataset(rfile, 'r')
+    rain_name, lat_name, lon_name = variables.values()
+    if max(ds.variables[lon_name]) > 180: # convert from positive degrees west to negative degrees west
+        ds.variables[lon_name] = ds.variables[lon_name] - 360
+    # Extract the latitude, longitude, and variable data
+    lat = ds.variables[lat_name][:]
+    lon = ds.variables[lon_name][:]
+    # Specify the latitude and longitude bounds for clipping
+    lat_min, lat_max = inarea[2],inarea[3]  # Example latitude range
+    lon_min, lon_max = inarea[0],inarea[1]  # Example longitude range
+
+    # Find the indices corresponding to the specified bounds
+    lat_inds = np.where((lat >= lat_min) & (lat <= lat_max))[0]
+    lon_inds = np.where((lon >= lon_min) & (lon <= lon_max))[0]
+    return [lat_inds.min(),lat_inds.max(),lon_inds.min(), lon_inds.max()]
+
+def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False):
     """
     Used to trim the dataset with defined inbounds or transposition domain
 
@@ -1260,24 +1276,30 @@ def readnetcdf(rfile,variables,inbounds=False,dropvars=False,setup=False):
         DESCRIPTION.
 
     """
-    infile = xr.open_dataset(rfile, drop_variables=dropvars,chunks='auto') if dropvars else xr.open_dataset(rfile)  # added DBW 07282023 to avoid reading in unnecessary variables
+    # infile = xr.open_dataset(rfile, drop_variables=dropvars,chunks='auto').load() if dropvars else xr.open_dataset(rfile).load()  # added DBW 07282023 to avoid reading in unnecessary variables
     rain_name,lat_name,lon_name = variables.values()
-    if max(infile[lon_name].values) > 180: # convert from positive degrees west to negative degrees west
-        infile[lon_name] = infile[lon_name] - 360 
-    if np.any(inbounds!=False):
-        latmin,latmax,longmin,longmax = inbounds[2],inbounds[3],inbounds[0],inbounds[1]
-        outrain=infile[rain_name].sel(**{lat_name:slice(latmin,latmax)},\
-                                                  **{lon_name:slice(longmin,longmax)})
+
+    if np.any(idxes!=False):
+        # latmin,latmax,longmin,longmax = inbounds[2],inbounds[3],inbounds[0],inbounds[1]
+        # outrain=infile[rain_name].sel(**{lat_name:slice(latmin,latmax)},\
+        #                                           **{lon_name:slice(longmin,longmax)})
+        infile = Dataset(rfile, 'r') ; var = infile.variables[rain_name][:]
+        outrain = var[:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1]
+        outtime = np.array(infile.variables['time'][:], dtype='datetime64[m]')
     else:
+        infile = xr.open_dataset(rfile, drop_variables=dropvars, chunks='auto').load() if dropvars else xr.open_dataset(rfile).load()
+        if max(infile[lon_name].values) > 180: # convert from positive degrees west to negative degrees west
+            infile[lon_name] = infile[lon_name] - 360
         outrain=infile[rain_name]
         outlatitude=outrain[lat_name]
-        outlongitude=outrain[lat_name] 
-    outtime=np.array(infile['time'],dtype='datetime64[m]')
+        outlongitude=outrain[lon_name]
+        outtime=np.array(infile['time'],dtype='datetime64[m]')
+
     infile.close()
     if setup:
         return np.array(outrain),outtime,np.array(outlatitude),np.array(outlongitude)
     else:
-        return outrain,outtime
+        return  outrain,outtime
   
   
 #==============================================================================
