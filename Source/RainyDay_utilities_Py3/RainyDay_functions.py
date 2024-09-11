@@ -640,8 +640,8 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
 def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,maskheight,maskwidth,precat,ptime,rainprop,rlzanglebin=None,delarray=None,spin=False,flexspin=True,samptype='uniform',cumkernel=None,rotation=False,domaintype='rectangular'):
     catyears=ptime.astype('datetime64[Y]').astype(int)+1970
     ptime=ptime.astype('datetime64[M]').astype(int)-(catyears-1970)*12+1
-    nyrs=np.int(rlzx.shape[0])
-    raindur=np.int(catrain.shape[1]+precat.shape[1])
+    nyrs=np.int16(rlzx.shape[0])
+    raindur=np.int16(catrain.shape[1]+precat.shape[1])
     outrain=np.zeros((nyrs,raindur,maskheight,maskwidth),dtype='float32')
     unqstm,unqind,unqcnts=np.unique(rlzstm,return_inverse=True,return_counts=True)      # unqstm is the storm number
     
@@ -656,8 +656,8 @@ def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,maskheight,maskwidth,prec
                 rndloc=np.random.random_sample(len(unqwhere))
                 shiftprex,shiftprey=numbakernel(rndloc,cumkernel)
             else:
-                shiftprex=np.random.random_integers(0,np.int(rainprop.subdimensions[1])-maskwidth-1,len(unqwhere))
-                shiftprey=np.random.random_integers(0,np.int(rainprop.subdimensions[0])-maskheight-1,len(unqwhere))
+                shiftprex=np.random.random_integers(0,np.int16(rainprop.subdimensions[1])-maskwidth-1,len(unqwhere))
+                shiftprey=np.random.random_integers(0,np.int16(rainprop.subdimensions[0])-maskheight-1,len(unqwhere))
             
         ctr=0   
         for j in unqwhere:
@@ -1337,7 +1337,7 @@ def readcatalog(rfile) :
     cattime = np.array(infile['cattime'],dtype='datetime64[m]')
 
     try:
-        timeresolution=np.int(infile.timeresolution)
+        timeresolution=np.int16(infile.timeresolution)
         resexists=True
     except:
         resexists=False
@@ -2007,11 +2007,11 @@ def read_arcascii(asciifile):
     #ncols=np.int(ncols.split('\n')[0].split(' ')[-1])
     #nrows=np.int(nrows.split('\n')[0].split(' ')[-1])
     
-    xllcorner=np.float(xllcorner.split('\n')[0].split(' ')[-1])
-    yllcorner=np.float(yllcorner.split('\n')[0].split(' ')[-1])
+    xllcorner=np.float32(xllcorner.split('\n')[0].split(' ')[-1])
+    yllcorner=np.float32(yllcorner.split('\n')[0].split(' ')[-1])
     
-    cellsize=np.float(cellsize.split('\n')[0].split(' ')[-1])
-    nodata=np.float(nodata.split('\n')[0].split(' ')[-1])
+    cellsize=np.float32(cellsize.split('\n')[0].split(' ')[-1])
+    nodata=np.float32(nodata.split('\n')[0].split(' ')[-1])
     
     #asciigrid = np.loadtxt(asciifile, skiprows=6)
     asciigrid = np.array(pd.read_csv(asciifile, skiprows=6,delimiter=' ', header=None),dtype='float32')

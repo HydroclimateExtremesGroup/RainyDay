@@ -621,9 +621,9 @@ except Exception:
 if Scenarios and areatype.lower()!="pointlist":
     try:
         nperyear=cardinfo["NPERYEAR"]
-        if nperyear!='false' or np.int(nperyear)!=1:
-            print("RainyDay will output "+str(np.int(nperyear))+" storms per synthetic year! If this is a big number, this could be very slow!")
-            nperyear=np.int(nperyear)
+        if nperyear!='false' or np.int16(nperyear)!=1:
+            print("RainyDay will output "+str(np.int16(nperyear))+" storms per synthetic year! If this is a big number, this could be very slow!")
+            nperyear=np.int16(nperyear)
             #if nperyear==1:
             #    nperyear='false'
     #        else:
@@ -1145,7 +1145,7 @@ if CreateCatalog:
     idxes = RainyDay.find_indices(flist[0],inarea,variables)
     proc_start = time.time()
     for i in filerange:
-        startpc = time.time()
+        #startpc = time.time()
         infile=flist[i]
         startrd = time.time()
         inrain,intime=RainyDay.readnetcdf(infile,variables,idxes,dropvars =droplist)
@@ -1182,6 +1182,9 @@ if CreateCatalog:
             tempmin=catmax[minind]
             if rainmax>tempmin:
                 checksep=intime[k]-cattime[:,-1]
+                #if intime[k]>np.datetime64('2500-01-01T01:00'):
+                #    sys.exit("weird time")
+                
                 if (checksep<timeseparation).any():
                     checkind=np.where(checksep<timeseparation)
                     if rainmax>=catmax[checkind]:
@@ -1198,8 +1201,8 @@ if CreateCatalog:
             
             rainarray[0:-1,:]=rainarray[1:int(catduration*60/rainprop.timeres),:]
             raintime[0:-1]=raintime[1:int(catduration*60/rainprop.timeres)] 
-        endpc = time.time()
-        print('overall time:', endpc-startpc)
+        #endpc = time.time()
+        #print('overall time:', endpc-startpc)
     # proc_end = time.time()
     # print(f"catalog timer: {(proc_end-proc_start)/60.:0.2f} minutes")
 #%%
@@ -1388,7 +1391,7 @@ stormnumber = [RainyDay.extract_storm_number(storm, catalogname) for storm in st
 
 # DBW, 08012023: currently this is inactive, 
 
-durationcheck=60./rainprop.timeres*duration==np.float(catrain.shape[0])
+durationcheck=60./rainprop.timeres*duration==np.float32(catrain.shape[0])
 if durationcheck==False:
     print("Storm catalog duration is longer than the specified duration...")
     print("Sorry, but we're turning DURATIONCORRECTION on. While there might be specific use cases where what you're trying to do makes sense, it is more likely that it doesn't. And it is difficult to sort out how to handle this situation in the refactored code.")
@@ -1559,10 +1562,10 @@ if DoDiagnostics:
     
     if rainprop.subdimensions[0]>rainprop.subdimensions[1]:
         figsizex=5
-        figsizey=5+0.25*5*np.float(rainprop.subdimensions[0])/rainprop.subdimensions[1]
+        figsizey=5+0.25*5*np.float32(rainprop.subdimensions[0])/rainprop.subdimensions[1]
     elif rainprop.subdimensions[0]<rainprop.subdimensions[1]: 
         figsizey=5
-        figsizex=5+0.25*5*np.float(rainprop.subdimensions[0])/rainprop.subdimensions[1]
+        figsizex=5+0.25*5*np.float32(rainprop.subdimensions[0])/rainprop.subdimensions[1]
     else:
         figsizey=5   
         figsizex=5
@@ -1598,8 +1601,8 @@ if DoDiagnostics:
         orientation='vertical'
     proj = ccrs.PlateCarree()
     
-    plotlat=latrange.to_numpy()
-    plotlon=lonrange.to_numpy()
+    plotlat=latrange.values
+    plotlon=lonrange.values
 
     
     # =============================================================================
@@ -2121,8 +2124,8 @@ if FreqAnalysis:
         print('Resampling and transposing storm '+str(i+1)+' out of '+str(nstorms)+' ('"{0:0.0f}".format(100*(i+1)/nstorms)+'%)')
         # UNIFORM RESAMPLING
         if transpotype=='uniform' and domain_type=='rectangular':
-            whichx[whichstorms==i,0]=np.random.randint(0,np.int(rainprop.subdimensions[1])-maskwidth+1,len(whichx[whichstorms==i]))
-            whichy[whichstorms==i,0]=np.random.randint(0,np.int(rainprop.subdimensions[0])-maskheight+1,len(whichy[whichstorms==i]))
+            whichx[whichstorms==i,0]=np.random.randint(0,np.int16(rainprop.subdimensions[1])-maskwidth+1,len(whichx[whichstorms==i]))
+            whichy[whichstorms==i,0]=np.random.randint(0,np.int16(rainprop.subdimensions[0])-maskheight+1,len(whichy[whichstorms==i]))
      
         # KERNEL-BASED AND INTENSITY-BASED RESAMPLING (ALSO NEEDED FOR IRREGULAR TRANSPOSITION DOMAINS)
         elif transpotype=='nonuniform':
@@ -2726,9 +2729,9 @@ if FreqAnalysis:
             catrain = np.array(catrain)
             catrain[np.less(catrain,0.)]=np.nan
             if padscenarios>0:
-                padrain=np.zeros((np.int(padscenarios/(rainprop.timeres/60.)),catrain.shape[1],catrain.shape[2]),dtype='float32')
+                padrain=np.zeros((np.int16(padscenarios/(rainprop.timeres/60.)),catrain.shape[1],catrain.shape[2]),dtype='float32')
                 catrain=np.concatenate([catrain,padrain],axis=0)
-                padtime=np.arange(raintime[-1]+np.timedelta64(rainprop.timeres,'m'),raintime[-1]+np.timedelta64(rainprop.timeres,'m')*np.int(padscenarios/(rainprop.timeres/60.))+np.timedelta64(rainprop.timeres-1,'m'),np.timedelta64(rainprop.timeres,'m'))
+                padtime=np.arange(raintime[-1]+np.timedelta64(rainprop.timeres,'m'),raintime[-1]+np.timedelta64(rainprop.timeres,'m')*np.int16(padscenarios/(rainprop.timeres/60.))+np.timedelta64(rainprop.timeres-1,'m'),np.timedelta64(rainprop.timeres,'m'))
                 raintime=np.concatenate([raintime,padtime])
             
             howmanystorms=np.sum(whichstorms==i)        # how many transposed storms are due to parent storm i?
