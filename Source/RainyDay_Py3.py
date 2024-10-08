@@ -850,7 +850,7 @@ if CreateCatalog:
   
     
     # GET SUBDIMENSIONS, ETC. FROM THE NETCDF FILE RATHER THAN FROM RAINPROPERTIES  
-    rainprop.spatialres,rainprop.dimensions,rainprop.bndbox,rainprop.timeres,rainprop.nodata,droplist=RainyDay.rainprop_setup(flist[0],rainprop,variables)
+    rainprop.spatialres,rainprop.dimensions,rainprop.bndbox,rainprop.timeres,rainprop.nodata,droplist,calendar,time_units=RainyDay.rainprop_setup(flist[0],rainprop,variables)
     spatres=rainprop.spatialres[0]
     
     
@@ -1148,7 +1148,7 @@ if CreateCatalog:
         #startpc = time.time()
         infile=flist[i]
         startrd = time.time()
-        inrain,intime=RainyDay.readnetcdf(infile,variables,idxes,dropvars =droplist)
+        inrain,intime=RainyDay.readnetcdf(infile,variables,idxes,dropvars =droplist,calendar=calendar,time_units=time_units)
         # endrd = time.time(); print("readnetcdf time:", endrd-startrd)
         
         #inrain=inrain[hourinclude,:]
@@ -1223,7 +1223,7 @@ if CreateCatalog:
     os.mkdir(fullpath + '/StormCatalog')
     
     # This part saves each storm as single file #
-    _,readtime = RainyDay.readnetcdf(flist[0],variables,idxes,dropvars=droplist)
+    _,readtime = RainyDay.readnetcdf(flist[0],variables,idxes,dropvars=droplist,calendar=calendar,time_units=time_units)
     print("Writing Storm Catalog!")
     for i in range(nstorms):
         start_time = cattime[i,0]
@@ -1250,7 +1250,7 @@ if CreateCatalog:
                         stm_file = file
                         break
                 # stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,indices)
-                stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,idxes,dropvars=droplist)
+                stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,idxes,dropvars=droplist,calendar=calendar,time_units=time_units)
             cind = np.where(stm_time == current_datetime)[0][0]
             catrain[k,:] = stm_rain[cind,:]
             current_datetime += rainprop.timeres 
@@ -1671,7 +1671,7 @@ if DoDiagnostics:
         fig = plt.figure()
         ax  = fig.add_subplot(111)
         fig.set_size_inches(6,4)
-        ax.bar(np.arange(0,raints.shape[0]*rainprop.timeres/60.,rainprop.timeres/60.), raints)
+        ax.bar(np.arange(0,raints.shape[0]*rainprop.timeres/60.,rainprop.timeres/60.), raints,width=rainprop.timeres/60., align='edge')
         ax.set_title('Storm '+str(i+1)+': '+str(plottime[-1])
                      +' Hyetograph\nMax Precipitation:'+str(np.round(catmax[i]))
                      +' mm @ Lat/Lon:'+"{:6.1f}".format(np.array(plotlat[caty[i]]-(maskheight/2+maskheight%2)*rainprop.spatialres[0]))

@@ -33,7 +33,7 @@ import fiona
 import copy
 #import nctoolkit
 
-from netCDF4 import Dataset
+from netCDF4 import Dataset, num2date
 #import h5netcdf
 import rasterio
 from rasterio.transform import from_origin
@@ -1257,7 +1257,7 @@ def find_indices(rfile,inarea,variables):
     lon_inds = np.where((lon >= lon_min) & (lon <= lon_max))[0]
     return [lat_inds.min(),lat_inds.max(),lon_inds.min(), lon_inds.max()]
 
-def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False):
+def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=False,time_units=False,):
     """
     Used to trim the dataset with defined inbounds or transposition domain
 
@@ -1285,9 +1285,12 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False):
         #                                           **{lon_name:slice(longmin,longmax)})
         infile = Dataset(rfile, 'r') ; var = infile.variables[rain_name][:]
         outrain = var[:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1]
-        outtime = np.array(infile.variables['time'][:], dtype='datetime64[m]')
+        time_var = infile.variables['time'];time_converted = num2date(time_var, units=time_var.units, calendar=calendar);
+        outtime = np.array(time_converted, dtype='datetime64[m]')
     else:
         infile = xr.open_dataset(rfile, drop_variables=dropvars, chunks='auto').load() if dropvars else xr.open_dataset(rfile).load()
+        ncfile = Dataset(rfile, 'r') ;
+        nctime = ncfile.variables['time']
         if max(infile[lon_name].values) > 180: # convert from positive degrees west to negative degrees west
             infile[lon_name] = infile[lon_name] - 360
         outrain=infile[rain_name]
@@ -1297,7 +1300,7 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False):
 
     infile.close()
     if setup:
-        return np.array(outrain),outtime,np.array(outlatitude),np.array(outlongitude)
+        return np.array(outrain),outtime,np.array(outlatitude),np.array(outlongitude),nctime
     else:
         return  outrain,outtime
   
@@ -1806,7 +1809,8 @@ def rainprop_setup(infile,rainprop,variables,catalog=False):
         droplist=find_unique_elements(inds.keys(),keepvars) # droplist will be passed to the 'drop_variables=' in xr.open_dataset within the storm catalog creation loop in RainyDay
         inds.close()
         
-        inrain,intime,inlatitude,inlongitude=readnetcdf(infile,variables,dropvars=droplist,setup = True)
+        inrain,intime,inlatitude,inlongitude,nctime=readnetcdf(infile,variables,dropvars=droplist,setup = True)
+        time_units = nctime.units; calendar = nctime.calendar if hasattr(nctime, 'calendar') else 'gregorian';
         # inrain,intime,inlatitude,inlongitude=readnetcdf(infile,variables,dropvars=droplist)
         # if max(inlongitude) > 180:
         #     inarea = inarea + 360
@@ -1855,7 +1859,7 @@ def rainprop_setup(infile,rainprop,variables,catalog=False):
     if catalog:
         return [xres,yres], [len(inlatitude),len(inlongitude)],[np.min(inlongitude),np.max(inlongitude),np.min(inlatitude),np.max(inlatitude)],tempres,nodata,inrain,intime,inlatitude,inlongitude,catx,caty,catmax,domainmask
     else:
-        return [xres,yres], [len(inlatitude),len(inlongitude)],[np.min(inlongitude),np.max(inlongitude)+xres,np.min(inlatitude)-yres,np.max(inlatitude)],tempres,nodata,droplist
+        return [xres,yres], [len(inlatitude),len(inlongitude)],[np.min(inlongitude),np.max(inlongitude)+xres,np.min(inlatitude)-yres,np.max(inlatitude)],tempres,nodata,droplist,calendar,time_units
 
 
 #==============================================================================
