@@ -1243,11 +1243,12 @@ def writemaximized(scenarioname,writename,outrain,writemax,write_ts,writex,write
 def find_indices(rfile,inarea,variables):
     ds = Dataset(rfile, 'r')
     rain_name, lat_name, lon_name = variables.values()
-    if max(ds.variables[lon_name]) > 180: # convert from positive degrees west to negative degrees west
-        ds.variables[lon_name] = ds.variables[lon_name] - 360
+
     # Extract the latitude, longitude, and variable data
     lat = ds.variables[lat_name][:]
     lon = ds.variables[lon_name][:]
+    if max(ds.variables[lon_name]) > 180: # convert from positive degrees west to negative degrees west
+        lon = lon - 360
     # Specify the latitude and longitude bounds for clipping
     lat_min, lat_max = inarea[2],inarea[3]  # Example latitude range
     lon_min, lon_max = inarea[0],inarea[1]  # Example longitude range
