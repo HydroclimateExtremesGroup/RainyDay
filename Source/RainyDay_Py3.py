@@ -1171,7 +1171,7 @@ if CreateCatalog:
             temparray=np.squeeze(np.nansum(rainarray[subtimeind,:],axis=1))
             
             if domain_type=='irregular':
-                # temparray = temparray * domainmask
+                temparray = temparray * domainmask
                 # startct = time.time()
                 rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
                 # rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask,stride=catalogstride)
