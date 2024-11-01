@@ -1284,8 +1284,8 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=F
         # latmin,latmax,longmin,longmax = inbounds[2],inbounds[3],inbounds[0],inbounds[1]
         # outrain=infile[rain_name].sel(**{lat_name:slice(latmin,latmax)},\
         #                                           **{lon_name:slice(longmin,longmax)})
-        infile = Dataset(rfile, 'r') ; var = infile.variables[rain_name][:]
-        outrain = var[:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1]
+        infile = Dataset(rfile, 'r') ;
+        outrain = infile.variables[rain_name][:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1];
         time_var = infile.variables['time'];time_converted = num2date(time_var, units=time_var.units, calendar=calendar);
         outtime = np.array(time_converted, dtype='datetime64[m]')
     else:
