@@ -10,13 +10,13 @@ How to download AORC data from HER S3
 
 2. Download the file containing the URLs of all AORC files using the following command. This text file lists all the URLs for AORC files from February 1, 1979, to December 31, 2021: wget https://web.s3.wisc.edu/aorc/aorc_urls.txt
 
-3. Filter the URLs to include only those for the files you wish to download, and then save them in a new file, such as download.txt. Below are some examples.
+3. Filter the URLs to include only those for the files you wish to download, and then save them in a new file, such as download.txt. Below are some examples:
 
--Subset the files for 1980: grep "1980/" aorc_urls.txt > download.txt
+     -Subset the files for 1980: grep "1980/" aorc_urls.txt > download.txt
 
--Subset the files for January 1980: grep "1980/AORC.198001" aorc_urls.txt > download.txt
+     -Subset the files for January 1980: grep "1980/AORC.198001" aorc_urls.txt > download.txt
 
--Subset the files from 1980 to 1985: grep -E "1980/AORC.1980|1981/AORC.1981|1982/AORC.1982|1983/AORC.1983|1984/AORC.1984|1985/AORC.1985" aorc_urls.txt > download.txt
+     -Subset the files from 1980 to 1985: grep -E "1980/AORC.1980|1981/AORC.1981|1982/AORC.1982|1983/AORC.1983|1984/AORC.1984|1985/AORC.1985" aorc_urls.txt > download.txt
 
 4. Use the wget command with download.txt to download the files: wget -i 1980_urls.txt
 
