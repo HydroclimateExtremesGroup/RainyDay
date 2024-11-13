@@ -18,7 +18,7 @@ How to download AORC data from HER S3
 
 -Subset the files from 1980 to 1985: grep -E "1980/AORC.1980|1981/AORC.1981|1982/AORC.1982|1983/AORC.1983|1984/AORC.1984|1985/AORC.1985" aorc_urls.txt > download.txt
 
-4.Use the wget command with download.txt to download the files: wget -i 1980_urls.txt
+4. Use the wget command with download.txt to download the files: wget -i 1980_urls.txt
 
 Welcome to RainyDay. RainyDay is a framework for generating large numbers of realistic extreme rainfall scenarios based on relatively short records of remotely-sensed precipitation fields.  It is founded on a statistical resampling concept known as stochastic storm transposition (SST).  These rainfall scenarios can then be used to examine the extreme rainfall statistics for a user-specified region, or to drive a hazard model (usually a hydrologic model, but the method produces output that would also be useful for landslide models). RainyDay is well suited to flood modeling in small and medium-sized watersheds.  The framework is made to be simple yet powerful and easily modified to meet specific needs, taking advantage of Python’s simple syntax and well-developed libraries.  It is still a work in progress.  Therefore, the contents of the guide may be out-of-date.  I will attempt to keep the documentation in synch with major changes to the code.  I would appreciate any feedback on the user guide and on RainyDay itself, so I can continue to improve both.
 
