@@ -1,0 +1,20 @@
+{
+"MAINPATH" : "/Users/daniel/iCloud/RainyDay2/Users_Guide/Examples" ,
+"SCENARIONAME" : "BigThompsonExample_AORC",
+"RAINPATH" : "/Users/daniel/Documents/DATA/AORC/UpdatedAORC/*/AORC.*.precip.nc",
+"CATALOGNAME" : "BigThompson_ExampleCatalog_AORC",
+"CREATECATALOG" : "false", "DURATION" :6 ,
+"NYEARS" : 100 , "NSTORMS" : 100, "NREALIZATIONS" : 100,"SCENARIOS" : "false",
+"TIMESEPARATION" : 12, "DOMAINTYPE" : "irregular",
+"DOMAINSHP"  : "/Users/daniel/iCloud/RainyDay2/Users_Guide/Examples/BigThompsonExample_AORC/GIS_Files/Domains/SST_Domain2.shp",
+"DIAGNOSTICPLOTS" : "false", "FREQANALYSIS" : "true", 
+"INCLUDEYEARS" : "1980-1984" , 
+"EXCLUDEMONTHS" : "none",
+"DURATIONCORRECTION" : "true", "TRANSPOSITION" : "uniform", "RESAMPLING" : "poisson", "RETURNLEVELS": [10,25,50,100,250,500,1000,2500,5000,10000],
+"POINTAREA" : "watershed",
+"WATERSHEDSHP": "/Users/daniel/iCloud/RainyDay2/Users_Guide/Examples/BigThompsonExample_AORC/GIS_Files/BigThompson_WatershedBoundary.shp",
+"CALCTYPE" : "ams",
+"VARIABLES" : {"rainname": "precrate","latname":"latitude","longname":"longitude"}
+}
+
+
