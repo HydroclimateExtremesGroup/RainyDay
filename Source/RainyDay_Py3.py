@@ -48,6 +48,7 @@ import matplotlib.patches as patches
 #from numba import njit, prange
 numbacheck=True
 import pandas as pd
+from shapely.affinity import translate
 
 # plotting stuff, really only needed for diagnostic plots
 #matplotlib.use('Agg')
@@ -1632,13 +1633,30 @@ if DoDiagnostics:
         #ax.set_extent(outerextent)
         if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
             ax.add_feature(wmap_feature,edgecolor="red", facecolor='none',zorder = 3)
+            # Add the basin but transposed to the new location
+            xnew_trans = lonrange[catx[i]]+(maskwidth/2)*rainprop.spatialres[0]
+            ynew_trans = latrange[caty[i]]+(maskheight/2)*rainprop.spatialres[1]
+            # Read the original geometries
+            original_geometries = list(Reader(wsmaskshp).geometries())
+            # Compute the centroid of the first geometry
+            original_centroid = original_geometries[0].centroid
+            # Compute translation distances
+            Delta_x = xnew_trans - original_centroid.x
+            Delta_y = ynew_trans - original_centroid.y
+            # Apply translation to all geometries
+            transposed_geometries = [translate(geom, xoff=Delta_x, yoff=Delta_y) for geom in original_geometries]
+            # Create a new ShapelyFeature for the transposed geometries
+            wmap_feature_transposed = ShapelyFeature(transposed_geometries, crs=ccrs.PlateCarree())
+            # Add the transposed feature to the plot
+            ax.add_feature(wmap_feature_transposed, edgecolor="green", facecolor='none', zorder=4)
         elif areatype.lower()=="box" or areatype.lower()=="point":
             ax.add_geometries([ring], facecolor='none',edgecolor='red',crs=ccrs.PlateCarree(),zorder = 3)
         if domain_type.lower()=="irregular" and os.path.isfile(domainshp):
             ax.add_feature(domain_feature,edgecolor="black",facecolor="None",zorder = 3)
             
         temprain.plot(x='longitude', y ='latitude',cmap='Blues',cbar_kwargs={'orientation':orientation,'label':"Storm Total precipitation [mm]"}, ax=ax, zorder=1)
-        circle = patches.Circle((plotlon[catx[i]], plotlat[caty[i]]), radius = 0.2, edgecolor='red', facecolor='none',zorder = 3)
+        # circle = patches.Circle((plotlon[catx[i]], plotlat[caty[i]]), radius = 0.2, edgecolor='red', facecolor='none',zorder = 3)
+        circle = patches.Circle((lonrange[catx[i]]+(maskwidth/2)*rainprop.spatialres[0], latrange[caty[i]]+(maskheight/2)*rainprop.spatialres[1]), radius = 0.2, edgecolor='green', facecolor='none',zorder = 3)
         ax.add_patch(circle)
         ax.add_feature(states_provinces, zorder = 3)
         #ax.add_feature(coast_10m)
@@ -1697,7 +1715,7 @@ if DoDiagnostics:
     padright=maskwidth-1
     
     plot_kernel=np.column_stack([np.zeros((pltkernel.shape[0],padleft)),pltkernel,np.zeros((pltkernel.shape[0],padright))])
-
+    
     #padtop=math.floor(maskheight/2)
     #padbottom=math.ceil(maskheight/2)-1
     padtop=0
@@ -1708,11 +1726,10 @@ if DoDiagnostics:
     xplot_kernel=xr.Dataset(
         data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
         coords=dict(
-            lat=(["y"],plotlat),
-            lon=(["x"],plotlon)),
+            lat=(["y"],latrange.data + (maskheight / 2) * rainprop.spatialres[1].item()),
+            lon=(["x"],lonrange.data + (maskwidth / 2) * rainprop.spatialres[0].item())),
         attrs=dict(description="diagnostic plotting of the storm probability density"),
     )
-    
     
     fig = plt.figure(figsize=(figsizex,figsizey))
     ax=plt.axes(projection=proj)
@@ -1729,8 +1746,9 @@ if DoDiagnostics:
         
     # plt.scatter(lonrange[catx]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty]-(maskheight/2)*rainprop.spatialres[1],s=catmax/2,facecolors='k',edgecolors='none',alpha=0.75)
     for k in range(0,nstorms):
-        plt.scatter(plotlon[catx[k]],plotlat[caty[k]],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
-        #plt.scatter(plotlon[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],plotlat[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+        # plt.scatter(plotlon[catx[k]],plotlat[caty[k]],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+        # plt.scatter(plotlon[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],plotlat[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
+        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='k',edgecolors='k',alpha=0.5)
 
     ax.add_feature(states_provinces)
     ax.set_xticks(np.linspace(outerextent[0],outerextent[1],2))
@@ -1765,9 +1783,9 @@ if DoDiagnostics:
         
     if domain_type.lower()=="irregular" and os.path.isfile(domainshp):
         ax.add_feature(domain_feature,edgecolor="black",facecolor="None",zorder = 3)
-    mu_t.plot(x='longitude', y ='latitude',cmap='Greens',cbar_kwargs={'orientation':orientation,'label':"Mean Storm Total precipitation [mm]"})
+    mu_t.plot(x='longitude', y ='latitude',cmap='Blues',cbar_kwargs={'orientation':orientation,'label':"Mean Storm Total precipitation [mm]"})
     for k in range(0,nstorms):
-        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
 
     ax.add_feature(states_provinces)
     #ax.add_feature(coast_10m)
@@ -1807,7 +1825,7 @@ if DoDiagnostics:
     
     std_t.plot(x='longitude', y ='latitude',cmap='Greys',cbar_kwargs={'orientation':orientation,'label':"Mean Storm Total precipitation [mm]"})
     for k in range(0,nstorms):
-        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
 
 
 
