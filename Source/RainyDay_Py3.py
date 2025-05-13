@@ -666,6 +666,9 @@ try:
         if spread.lower()=='ensemble':
             spreadtype='ensemble'
             print('"ensemble spread" will be calculated for precipitation frequency analysis...')
+        elif spread.lower()=='all_realizations':
+            spreadtype='all_realizations'
+            print(' The estimation from all the realization will be printed for precipitation frequency analysis...')
         else:
             try:
                 int(spread)
@@ -686,27 +689,25 @@ except Exception:
 try:
     if np.any(np.core.defchararray.find(list(cardinfo.keys()),"RETURNLEVELS")>-1):
         speclevels=cardinfo["RETURNLEVELS"]
-        if speclevels.lower()=='all':
+        if isinstance(speclevels, str) and speclevels.lower() == 'all':
             print('using all return levels...')
             alllevels=True
         else:
             alllevels=False
-            if ',' in speclevels:
-                speclevels=speclevels.split(',')
+            if isinstance(speclevels, (list, np.ndarray)):
                 try:
                     speclevels=np.float32(speclevels)
                 except:
                     print("Non-numeric value provided to RETURNLEVELS.")
-
                 speclevels=speclevels[speclevels<=nsimulations+0.00001]
                 speclevels=speclevels[speclevels>=0.99999]
             else:
                 sys.exit("The format of RETURNLEVELS isn't recognized.  It should be 'all' or a comma separated list.")
     else:
         alllevels=True
+
 except Exception:
     alllevels=True
-
 
 try:
     rotation=False
@@ -2585,7 +2586,7 @@ if FreqAnalysis:
         
         if spreadtype=='ensemble':
             spreadmin=np.nanmin(sortrain,axis=1)
-            spreadmax=np.nanmax(sortrain,axis=1)    
+            spreadmax=np.nanmax(sortrain,axis=1)   
         else:
             spreadmin=np.percentile(sortrain,(100-quantilecalc)/2,axis=1)
             spreadmax=np.percentile(sortrain,quantilecalc+(100-quantilecalc)/2,axis=1)
@@ -2617,7 +2618,7 @@ if FreqAnalysis:
         np.savetxt(FreqFile_max,freqanalysis_max,delimiter=',',header='prob.exceed,returnperiod,maxrain',fmt='%6.2f',comments='#',footer=ptlistname)
         
     else:
-        if spreadtype=='ensemble':
+        if spreadtype=='ensemble' or spreadtype=='all_realizations':
             spreadmin=np.nanmin(sortrain,axis=1)
             spreadmax=np.nanmax(sortrain,axis=1)
             spreadmean=np.nanmean(sortrain,1)
@@ -2625,9 +2626,14 @@ if FreqAnalysis:
             spreadmin=np.percentile(sortrain,(100-quantilecalc)/2,axis=1)
             spreadmax=np.percentile(sortrain,quantilecalc+(100-quantilecalc)/2,axis=1)
     
-        freqanalysis=np.column_stack((exceedp,returnperiod,spreadmin,spreadmean,spreadmax))
-        
-        np.savetxt(FreqFile,freqanalysis,delimiter=',',header='prob.exceed,returnperiod,minrain,meanrain,maxrain',fmt='%6.2f',comments='')
+        if spreadtype=='ensemble' or spreadtype=='quantile':
+            freqanalysis=np.column_stack((exceedp,returnperiod,spreadmin,spreadmean,spreadmax))
+            np.savetxt(FreqFile,freqanalysis,delimiter=',',header='prob.exceed,returnperiod,minrain,meanrain,maxrain',fmt='%6.2f',comments='')
+        elif spreadtype=='all_realizations':
+            freqanalysis=np.column_stack((exceedp,returnperiod,sortrain))
+            rlz_headers = [f'rlz{i+1}' for i in range(nrealizations)]
+            header = 'prob.exceed,returnperiod,' + ','.join(rlz_headers)
+            np.savetxt(FreqFile,freqanalysis,delimiter=',',header=header,fmt='%6.2f',comments='')
         
         import matplotlib.patches as mpatches
         from matplotlib.font_manager import FontProperties
