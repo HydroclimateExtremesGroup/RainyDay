@@ -216,23 +216,53 @@ def catalogAlt_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rains
     # return rmax, wheremax[0][0], wheremax[1][0]
 
 @jit(nopython=True, fastmath =  True)
-def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
-    #
-    for y in range(0, int32(yloop)):
-        for x in range(0, int32(xloop),stride):
+def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop, maskheight, maskwidth, rainsum, stride=1):
+    rainsum[:, :] = 0.0  # clear output array
 
-            rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
+    rmax = -1e30
+    ymax = -1
+    xmax = -1
 
-            rainsum[y, xlen-x-1] = np.nansum(np.multiply(temparray[y:(y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
-            rainsum[ylen-y-1, x] = np.nansum(np.multiply(temparray[ylen-y-1:(ylen-y-1+maskheight), x:(x+maskwidth)], trimmask))
+    for y in range(0, yloop):
+        for x in range(0, xloop, stride):
+            # Define all 4 symmetric locations
+            positions = [
+                (y, x),  # original
+                (y, xlen - x - 1),  # x-flipped
+                (ylen - y - 1, x),  # y-flipped
+                (ylen - y - 1, xlen - x - 1)  # x & y flipped
+            ]
+
+            for yy, xx in positions:
+                # Ensure we’re within bounds
+                if yy + maskheight <= temparray.shape[0] and xx + maskwidth <= temparray.shape[1]:
+                    patch = temparray[yy:yy + maskheight, xx:xx + maskwidth]
+                    value = np.nansum(patch * trimmask)
+                    rainsum[yy, xx] = value
+
+                    if not np.isnan(value) and value > rmax:
+                        rmax = value
+                        ymax = yy
+                        xmax = xx
+
+    return rmax, ymax, xmax
+
+# @jit(nopython=True, fastmath =  True)
+# def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
+#     for y in range(0, int32(yloop)):
+#         for x in range(0, int32(xloop),stride):
+            
+#             rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
+
+#             rainsum[y, xlen-x-1] = np.nansum(np.multiply(temparray[y:(y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
+#             rainsum[ylen-y-1, x] = np.nansum(np.multiply(temparray[ylen-y-1:(ylen-y-1+maskheight), x:(x+maskwidth)], trimmask))
 
 
-            rainsum[ylen-y-1, xlen-x-1] = np.nansum(np.multiply(temparray[ylen-y:(ylen-y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
-
-    #wheremax=np.argmax(rainsum)
-    rmax=np.nanmax(rainsum)
-    wheremax=np.where(np.equal(rainsum,rmax))
-    return rmax, wheremax[0][0], wheremax[1][0]
+#             rainsum[ylen-y-1, xlen-x-1] = np.nansum(np.multiply(temparray[ylen-y:(ylen-y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
+#     #wheremax=np.argmax(rainsum)
+#     rmax=np.nanmax(rainsum)
+#     wheremax=np.where(np.equal(rainsum,rmax))
+#     return rmax, wheremax[0][0], wheremax[1][0]
 
 @jit(nopython=True,  fastmath =  True)
 def catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
