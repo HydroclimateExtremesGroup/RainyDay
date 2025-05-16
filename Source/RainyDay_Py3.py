@@ -2748,11 +2748,17 @@ if FreqAnalysis:
         # Get sorting indices based on the first channel of whichrain along the first axis
         sortind_first_axis = np.argsort(whichrain[:, :, :, 0], axis=0)
 
-        # Sort all arrays along the first axis
-        whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain), sortind_first_axis, axis=0)
-        whichstorms_sorted_first = np.take_along_axis(np.squeeze(whichstorms), sortind_first_axis, axis=0)
-        whichx_sorted_first = np.take_along_axis(np.squeeze(whichx), sortind_first_axis, axis=0)
-        whichy_sorted_first = np.take_along_axis(np.squeeze(whichy), sortind_first_axis, axis=0)
+        # # Sort all arrays along the first axis
+        # whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain), sortind_first_axis, axis=0)
+        # whichstorms_sorted_first = np.take_along_axis(np.squeeze(whichstorms), sortind_first_axis, axis=0)
+        # whichx_sorted_first = np.take_along_axis(np.squeeze(whichx), sortind_first_axis, axis=0)
+        # whichy_sorted_first = np.take_along_axis(np.squeeze(whichy), sortind_first_axis, axis=0)
+
+        # Sort all arrays along the first axis: Changed by Gabriel 2025-03-12
+        whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain, axis=3), sortind_first_axis, axis=0)
+        whichstorms_sorted_first = np.take_along_axis(whichstorms, sortind_first_axis, axis=0)
+        whichx_sorted_first = np.take_along_axis(np.squeeze(whichx, axis=3), sortind_first_axis, axis=0)
+        whichy_sorted_first = np.take_along_axis(np.squeeze(whichy, axis=3), sortind_first_axis, axis=0)
 
         # Get sorting indices based on the first channel of whichrain_sorted_first along the second axis
         sortind_second_axis = np.argsort(whichrain_sorted_first[-1, :, :],axis=0)
