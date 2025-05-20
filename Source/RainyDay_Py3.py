@@ -1121,7 +1121,7 @@ if areatype=="pointlist":
 #################################################################################
 # STEP 1: CREATE STORM CATALOG
 #################################################################################
-print(trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth)
+
 if CreateCatalog: 
     print("reading precipitation files...")
     
@@ -1210,7 +1210,6 @@ if CreateCatalog:
             raintime[0:-1]=raintime[1:int(catduration*60/rainprop.timeres)] 
         #endpc = time.time()
         #print('overall time:', endpc-startpc)
-    print(catmax/mnorm*rainprop.timeres/60)
     # proc_end = time.time()
     # print(f"catalog timer: {(proc_end-proc_start)/60.:0.2f} minutes")
 #%%
