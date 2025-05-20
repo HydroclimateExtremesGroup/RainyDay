@@ -1045,12 +1045,13 @@ mnorm=np.sum(trimmask)
 # ylen=rainprop.subdimensions[0]-maskheight+1
 
 ### New catalognumba configuration
-xlen =rainprop.subdimensions[1]-maskwidth
+xlen =rainprop.subdimensions[1]-maskwidth + 1 
 if (rainprop.subdimensions[1] - maskwidth ) % 2 != 0:
     xloop = (rainprop.subdimensions[1] - maskwidth - 1) / 2
 else:
     xloop = (rainprop.subdimensions[1] - maskwidth) / 2
-ylen =rainprop.subdimensions[0]-maskheight-2
+# ylen =rainprop.subdimensions[0]-maskheight-2 
+ylen =rainprop.subdimensions[0]-maskheight +1 # GP
 if (rainprop.subdimensions[0]-maskheight)% 2 != 0:
     yloop = (rainprop.subdimensions[0]-maskheight -1) / 2
 else:
@@ -1120,7 +1121,7 @@ if areatype=="pointlist":
 #################################################################################
 # STEP 1: CREATE STORM CATALOG
 #################################################################################
-
+print(trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth)
 if CreateCatalog: 
     print("reading precipitation files...")
     
@@ -1209,6 +1210,7 @@ if CreateCatalog:
             raintime[0:-1]=raintime[1:int(catduration*60/rainprop.timeres)] 
         #endpc = time.time()
         #print('overall time:', endpc-startpc)
+    print(catmax/mnorm*rainprop.timeres/60)
     # proc_end = time.time()
     # print(f"catalog timer: {(proc_end-proc_start)/60.:0.2f} minutes")
 #%%
@@ -1218,6 +1220,7 @@ if CreateCatalog:
         nstorms = zero_ind
         print(f"The number of storms found are lesser than the storms defined in JSON, trimming the storm\
               to {zero_ind} storms")
+    
     sind=np.argsort(catmax)
     cattime=cattime[sind,:]
     catx=catx[sind]
@@ -2729,7 +2732,8 @@ if FreqAnalysis:
 
     if Scenarios:
         print("writing spacetime precipitation scenarios...")
-        
+        # Track how many storms have been written per year
+        written_per_year = {}
         # check if scenario files already exist there and if so, delete them:
         if os.path.exists(fullpath+'/Realizations') and os.path.isdir(fullpath+'/Realizations'):
             RainyDay.delete_files_in_directory(fullpath+'/Realizations')
@@ -2807,7 +2811,8 @@ if FreqAnalysis:
                 raintime=np.concatenate([raintime,padtime])
             
             howmanystorms=np.sum(whichstorms==i)        # how many transposed storms are due to parent storm i?
-            
+            print(howmanystorms)
+
             if howmanystorms>0:
                 stormindex=np.zeros_like(whichstorms) 
                 stormindex[:]=-999
