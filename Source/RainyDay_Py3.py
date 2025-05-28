@@ -479,8 +479,9 @@ if DoDiagnostics and shpdom:
                 import geopandas as gpd
                 dshp = gpd.read_file(domainshp)
                 #print stateshp1.crs
-                dshp.crs={}
-                dshp.to_file(domainshp, driver='ESRI Shapefile')
+                # Comment the two below lines for parallel processing to avoid conflict while writing the shapefile in multiprocessing
+                # dshp.crs={}
+                # dshp.to_file(domainshp, driver='ESRI Shapefile')
 #
 #
 # perform the frequency analysis?
@@ -1045,7 +1046,8 @@ mnorm=np.sum(trimmask)
 # ylen=rainprop.subdimensions[0]-maskheight+1
 
 ### New catalognumba configuration
-xlen =rainprop.subdimensions[1]-maskwidth + 1 
+# xlen =rainprop.subdimensions[1]-maskwidth
+xlen =rainprop.subdimensions[1]-maskwidth + 1  # GP
 if (rainprop.subdimensions[1] - maskwidth ) % 2 != 0:
     xloop = (rainprop.subdimensions[1] - maskwidth - 1) / 2
 else:
@@ -1155,7 +1157,9 @@ if CreateCatalog:
         #startpc = time.time()
         infile=flist[i]
         startrd = time.time()
+
         inrain,intime=RainyDay.readnetcdf(infile,variables,idxes,dropvars =droplist,calendar=calendar,time_units=time_units)
+
         # endrd = time.time(); print("readnetcdf time:", endrd-startrd)
         
         #inrain=inrain[hourinclude,:]
@@ -1180,7 +1184,9 @@ if CreateCatalog:
             if domain_type=='irregular':
                 temparray = temparray * domainmask
                 # startct = time.time()
+                # start = time.time()
                 rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
+                # print(f"✅ Time elapsed: {time.time() - start:.2f} seconds")
                 # rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask,stride=catalogstride)
             else:
                 rainmax,ycat,xcat=RainyDay.catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
@@ -1749,21 +1755,22 @@ if DoDiagnostics:
     
     plot_kernel=np.row_stack([np.zeros((padtop,plot_kernel.shape[1])),plot_kernel,np.zeros((padbottom,plot_kernel.shape[1]))])
 
-    # xplot_kernel=xr.Dataset(
-    #     data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
-    #     coords=dict(
-    #         lat=(["y"],latrange.data + (maskheight / 2) * rainprop.spatialres[1].item()),
-    #         lon=(["x"],lonrange.data + (maskwidth / 2) * rainprop.spatialres[0].item())),
-    #     attrs=dict(description="diagnostic plotting of the storm probability density"),
-    # )
-
-    xplot_kernel=xr.Dataset(
-        data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
-        coords=dict(
-            lat=(["y"],latrange.data - rainprop.spatialres[1].item()/2),
-            lon=(["x"],lonrange.data + rainprop.spatialres[0].item()/2)),
-        attrs=dict(description="diagnostic plotting of the storm probability density"),
-    )
+    if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
+        xplot_kernel=xr.Dataset(
+            data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
+            coords=dict(
+                lat=(["y"],latrange.data + (maskheight / 2) * rainprop.spatialres[1].item()),
+                lon=(["x"],lonrange.data + (maskwidth / 2) * rainprop.spatialres[0].item())),
+            attrs=dict(description="diagnostic plotting of the storm probability density"),
+        )
+    elif areatype.lower()=="box" or areatype.lower()=="point":
+        xplot_kernel=xr.Dataset(
+            data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
+            coords=dict(
+                lat=(["y"],latrange.data - rainprop.spatialres[1].item()/2),
+                lon=(["x"],lonrange.data + rainprop.spatialres[0].item()/2)),
+            attrs=dict(description="diagnostic plotting of the storm probability density"),
+        )
     
     fig = plt.figure(figsize=(figsizex,figsizey))
     ax=plt.axes(projection=proj)
@@ -2014,14 +2021,26 @@ if FreqAnalysis:
     if durcorrection:
         whichtimeind=np.zeros((whichstorms.shape),dtype='float32')
     
-    
+    # For irregular domains under uniform transposition, we mask out border cells to avoid placing storm windows
+    # where the mask would exceed domain bounds. However, for single-pixel masks (maskheight = maskwidth = 1),
+    # this masking is unnecessary and would incorrectly remove valid storm locations.
+    # Therefore, we apply border masking only if maskheight or maskwidth is greater than 1.
+
+    # Trim all edges of the domain mask to ensure storm centroids stay within bounds.
+    # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
+    # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-        domainmask[-maskheight:,:]=0.
-        domainmask[:,-maskwidth:]=0.
+        if maskheight > 1:
+            domainmask[:maskheight, :] = 0.    # Trim northern edge
+            domainmask[-maskheight:,:]= 0.      # Trim southern edge   
+        if maskwidth > 1:
+            domainmask[:, :maskwidth] = 0.     # Trim western edge
+            domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
+
         xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
         xmask=xmask[np.equal(domainmask,True)]
         ymask=ymask[np.equal(domainmask,True)]
-        
+
     if rescaletype=='stochastic' or rescaletype=='deterministic' or rescaletype=='dimensionless':
         whichmultiplier=np.empty_like(whichrain)
         whichmultiplier[:]=np.nan
