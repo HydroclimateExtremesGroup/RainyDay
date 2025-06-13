@@ -5,7 +5,7 @@
 "CATALOGNAME" : "Madison_ExampleCatalog_AORC_",
 "CREATECATALOG" : "true", "DURATION" :24 ,
 "NYEARS" : 500 ,
-"NSTORMS" : 400,
+"NSTORMS" : 80,
 "NREALIZATIONS" : 100,
 "SCENARIOS" : "false",
 "TIMESEPARATION" : 12, "DOMAINTYPE" : "rectangular",
