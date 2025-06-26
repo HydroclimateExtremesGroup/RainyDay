@@ -48,6 +48,7 @@ import matplotlib.patches as patches
 #from numba import njit, prange
 numbacheck=True
 import pandas as pd
+from shapely.affinity import translate
 
 # plotting stuff, really only needed for diagnostic plots
 #matplotlib.use('Agg')
@@ -454,7 +455,12 @@ if CreateCatalog==False and np.allclose(inarea,catarea)==False:
 # do you want to plot diagnostic plots? Storm total maps, hyetographs, catalog mean and std. deviation maps, and CDF of storm total rainfall
 try:
     DoDiagnostics=cardinfo["DIAGNOSTICPLOTS"]
-    if DoDiagnostics.lower()=='true':
+    if DoDiagnostics.lower()=='only-statistics':
+        DoDiagnostics_stats=True
+    else:
+        DoDiagnostics_stats=False
+    
+    if DoDiagnostics.lower()=='true' or DoDiagnostics.lower()=='only-statistics':
         DoDiagnostics=True
     else:
         DoDiagnostics=False
@@ -473,8 +479,9 @@ if DoDiagnostics and shpdom:
                 import geopandas as gpd
                 dshp = gpd.read_file(domainshp)
                 #print stateshp1.crs
-                dshp.crs={}
-                dshp.to_file(domainshp, driver='ESRI Shapefile')
+                # Comment the two below lines for parallel processing to avoid conflict while writing the shapefile in multiprocessing
+                # dshp.crs={}
+                # dshp.to_file(domainshp, driver='ESRI Shapefile')
 #
 #
 # perform the frequency analysis?
@@ -665,6 +672,9 @@ try:
         if spread.lower()=='ensemble':
             spreadtype='ensemble'
             print('"ensemble spread" will be calculated for precipitation frequency analysis...')
+        elif spread.lower()=='all_realizations':
+            spreadtype='all_realizations'
+            print(' The estimation from all the realization will be printed for precipitation frequency analysis...')
         else:
             try:
                 int(spread)
@@ -685,27 +695,25 @@ except Exception:
 try:
     if np.any(np.core.defchararray.find(list(cardinfo.keys()),"RETURNLEVELS")>-1):
         speclevels=cardinfo["RETURNLEVELS"]
-        if speclevels.lower()=='all':
+        if isinstance(speclevels, str) and speclevels.lower() == 'all':
             print('using all return levels...')
             alllevels=True
         else:
             alllevels=False
-            if ',' in speclevels:
-                speclevels=speclevels.split(',')
+            if isinstance(speclevels, (list, np.ndarray)):
                 try:
                     speclevels=np.float32(speclevels)
                 except:
                     print("Non-numeric value provided to RETURNLEVELS.")
-
                 speclevels=speclevels[speclevels<=nsimulations+0.00001]
                 speclevels=speclevels[speclevels>=0.99999]
             else:
                 sys.exit("The format of RETURNLEVELS isn't recognized.  It should be 'all' or a comma separated list.")
     else:
         alllevels=True
+
 except Exception:
     alllevels=True
-
 
 try:
     rotation=False
@@ -862,7 +870,6 @@ if CreateCatalog:
     rainprop.subextent,rainprop.subdimensions,latrange,lonrange,indices=RainyDay.findsubbox(inarea,variables,flist[0])
     if ncfdom and (np.any(domainmask.shape!=rainprop.subdimensions)):  ## we should remove it
         sys.exit("Something went terribly wrong :(")        # this shouldn't happen
-
 
 
 #==============================================================================
@@ -1039,12 +1046,14 @@ mnorm=np.sum(trimmask)
 # ylen=rainprop.subdimensions[0]-maskheight+1
 
 ### New catalognumba configuration
-xlen =rainprop.subdimensions[1]-maskwidth
+# xlen =rainprop.subdimensions[1]-maskwidth
+xlen =rainprop.subdimensions[1]-maskwidth + 1  # GP
 if (rainprop.subdimensions[1] - maskwidth ) % 2 != 0:
     xloop = (rainprop.subdimensions[1] - maskwidth - 1) / 2
 else:
     xloop = (rainprop.subdimensions[1] - maskwidth) / 2
-ylen =rainprop.subdimensions[0]-maskheight-2
+# ylen =rainprop.subdimensions[0]-maskheight-2 
+ylen =rainprop.subdimensions[0]-maskheight +1 # GP
 if (rainprop.subdimensions[0]-maskheight)% 2 != 0:
     yloop = (rainprop.subdimensions[0]-maskheight -1) / 2
 else:
@@ -1148,7 +1157,9 @@ if CreateCatalog:
         #startpc = time.time()
         infile=flist[i]
         startrd = time.time()
+
         inrain,intime=RainyDay.readnetcdf(infile,variables,idxes,dropvars =droplist,calendar=calendar,time_units=time_units)
+
         # endrd = time.time(); print("readnetcdf time:", endrd-startrd)
         
         #inrain=inrain[hourinclude,:]
@@ -1173,7 +1184,9 @@ if CreateCatalog:
             if domain_type=='irregular':
                 temparray = temparray * domainmask
                 # startct = time.time()
+                # start = time.time()
                 rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
+                # print(f"✅ Time elapsed: {time.time() - start:.2f} seconds")
                 # rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask,stride=catalogstride)
             else:
                 rainmax,ycat,xcat=RainyDay.catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
@@ -1212,6 +1225,7 @@ if CreateCatalog:
         nstorms = zero_ind
         print(f"The number of storms found are lesser than the storms defined in JSON, trimming the storm\
               to {zero_ind} storms")
+    
     sind=np.argsort(catmax)
     cattime=cattime[sind,:]
     catx=catx[sind]
@@ -1251,10 +1265,20 @@ if CreateCatalog:
                         break
                 # stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,indices)
                 stm_rain,stm_time = RainyDay.readnetcdf(stm_file,variables,idxes,dropvars=droplist,calendar=calendar,time_units=time_units)
-            cind = np.where(stm_time == current_datetime)[0][0]
-            catrain[k,:] = stm_rain[cind,:]
-            current_datetime += rainprop.timeres 
+
+            # If there is no match (missing file), fill with zeros. Useful for datasets with missing days in leap years
+            match = np.where(stm_time == current_datetime)[0] if len(stm_time) > 0 else []
+            if len(match) == 0:
+                print(f"[Info] {current_datetime} not found in data. Filling with zeros.")
+                catrain[k, :] = 0.0
+            else:
+                cind = match[0]
+                catrain[k, :] = stm_rain[cind, :]
+            # cind = np.where(stm_time == current_datetime)[0][0]
+            # catrain[k,:] = stm_rain[cind,:]
+            current_datetime += rainprop.timeres
             k += 1
+
         storm_time = np.datetime_as_string(start_time, unit='D').replace("-","")
         storm_name = fullpath +'/StormCatalog/' + catalogname+'_storm_'+str(i+1) +"_"+ storm_time+".nc"
         print("Writing Storm "+ str(i+1) + " out of " + str(nstorms))
@@ -1554,10 +1578,15 @@ if DoDiagnostics:
         ring = LinearRing(list(zip(lons, lats)))
     elif areatype.lower()=="point":
         from shapely.geometry.polygon import LinearRing
-        lons = [ptlon-rainprop.spatialres[0]/2., ptlon-rainprop.spatialres[0]/2., ptlon+rainprop.spatialres[0]/2., ptlon+rainprop.spatialres[0]/2.]
-        lats = [ptlat-rainprop.spatialres[1]/2., ptlat+rainprop.spatialres[1]/2.,ptlat+rainprop.spatialres[1]/2., ptlat-rainprop.spatialres[1]/2.]
+        # lons = [ptlon-rainprop.spatialres[0]/2., ptlon-rainprop.spatialres[0]/2., ptlon+rainprop.spatialres[0]/2., ptlon+rainprop.spatialres[0]/2.]
+        # lats = [ptlat-rainprop.spatialres[1]/2., ptlat+rainprop.spatialres[1]/2.,ptlat+rainprop.spatialres[1]/2., ptlat-rainprop.spatialres[1]/2.]
+        closest_lon = lonrange[np.abs(lonrange - ptlon).argmin()] + rainprop.spatialres[0]/2
+        closest_lat = latrange[np.abs(latrange - ptlat).argmin()] - rainprop.spatialres[1]/2
+        lons = [closest_lon - rainprop.spatialres[0]/2, closest_lon - rainprop.spatialres[0]/2, closest_lon + rainprop.spatialres[0]/2, closest_lon + rainprop.spatialres[0]/2]
+        lats = [closest_lat - rainprop.spatialres[1]/2, closest_lat + rainprop.spatialres[1]/2, closest_lat + rainprop.spatialres[1]/2, closest_lat - rainprop.spatialres[1]/2]
+        
         ring = LinearRing(list(zip(lons, lats)))
-
+        
     print("preparing diagnostic plots (this could take a while)...")
     
     if rainprop.subdimensions[0]>rainprop.subdimensions[1]:
@@ -1608,12 +1637,14 @@ if DoDiagnostics:
     # =============================================================================
     #     redoing plotting to be consistent with 1 storm per file configuration
     # =============================================================================
-        
+    
     for i in np.arange(0,nstorms):
         plotrain,plottime,_,_,_,_,_,_,_,_,_ = RainyDay.readcatalog(stormlist[i])
-        print("plotting diagnostics for storm "+str(i+1)+" out of "+str(nstorms))
         plotrain = plotrain.where(plotrain >= 0) ##Replace the missing flags
         temprain = plotrain.sum(dim = 'time', skipna =True) * rainprop.timeres / 60.0
+        # Shift coordinates to the center for plotting. RainyDay coordinates are upper left
+        temprain['longitude'] = temprain['longitude'] + rainprop.spatialres[0]/2
+        temprain['latitude'] = temprain['latitude'] - rainprop.spatialres[1]/2
         
         if i == 0:
             mu_t = temprain    
@@ -1625,64 +1656,83 @@ if DoDiagnostics:
             if i > 1:
                 std_t = np.sqrt(M2 / i)
         
-        
-        
-        fig = plt.figure(figsize=(figsizex,figsizey))
-        ax=plt.axes(projection=proj)
-        #ax.set_extent(outerextent)
-        if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
-            ax.add_feature(wmap_feature,edgecolor="red", facecolor='none',zorder = 3)
-        elif areatype.lower()=="box" or areatype.lower()=="point":
-            ax.add_geometries([ring], facecolor='none',edgecolor='red',crs=ccrs.PlateCarree(),zorder = 3)
-        if domain_type.lower()=="irregular" and os.path.isfile(domainshp):
-            ax.add_feature(domain_feature,edgecolor="black",facecolor="None",zorder = 3)
-            
-        temprain.plot(x='longitude', y ='latitude',cmap='Blues',cbar_kwargs={'orientation':orientation,'label':"Storm Total precipitation [mm]"}, ax=ax, zorder=1)
-        circle = patches.Circle((plotlon[catx[i]], plotlat[caty[i]]), radius = 0.2, edgecolor='red', facecolor='none',zorder = 3)
-        ax.add_patch(circle)
-        ax.add_feature(states_provinces, zorder = 3)
-        #ax.add_feature(coast_10m)
-        ax.set_xticks(np.linspace(outerextent[0],outerextent[1],2))
-        lon_formatter = cticker.LongitudeFormatter()
-        ax.xaxis.set_major_formatter(lon_formatter)
-    
-        # Define the yticks for latitude
-        ax.set_yticks(np.linspace(outerextent[3],outerextent[2],2))
-        lat_formatter = cticker.LatitudeFormatter()
-        ax.set(xlabel=None,ylabel=None)
-        ax.yaxis.set_major_formatter(lat_formatter)
-        ax.set_title('Storm '+str(i+1)+': '+str(plottime[-1])
-                     +' Storm Total Rainfall\nMax Precipitation:'+str(np.round(catmax[i]))
-                     +' mm @ Lat/Lon:'+"{:6.1f}".format(np.array(plotlat[caty[i]]-(maskheight/2+maskheight%2)*rainprop.spatialres[0]))
-                     +u'\N{DEGREE SIGN}'+','+"{:6.1f}".format(np.array(plotlon[catx[i]]
-                     +(maskwidth/2+maskwidth%2)*rainprop.spatialres[0]))
-                     +u'\N{DEGREE SIGN}')
+        if DoDiagnostics_stats == False:
+            print("plotting diagnostics for storm "+str(i+1)+" out of "+str(nstorms))
+            fig = plt.figure(figsize=(figsizex,figsizey))
+            ax=plt.axes(projection=proj)
+            #ax.set_extent(outerextent)
+            if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
+                ax.add_feature(wmap_feature,edgecolor="red", facecolor='none',zorder = 3)
+                # Add the basin but transposed to the new location
+                xnew_trans = lonrange[catx[i]]+(maskwidth/2)*rainprop.spatialres[0]
+                ynew_trans = latrange[caty[i]]+(maskheight/2)*rainprop.spatialres[1]
+                # Read the original geometries
+                original_geometries = list(Reader(wsmaskshp).geometries())
+                # Compute the centroid of the first geometry
+                original_centroid = original_geometries[0].centroid
+                # Compute translation distances
+                Delta_x = xnew_trans - original_centroid.x
+                Delta_y = ynew_trans - original_centroid.y
+                # Apply translation to all geometries
+                transposed_geometries = [translate(geom, xoff=Delta_x, yoff=Delta_y) for geom in original_geometries]
+                # Create a new ShapelyFeature for the transposed geometries
+                wmap_feature_transposed = ShapelyFeature(transposed_geometries, crs=ccrs.PlateCarree())
+                # Add the transposed feature to the plot
+                ax.add_feature(wmap_feature_transposed, edgecolor="green", facecolor='none', zorder=4)
+                circle = patches.Circle((lonrange[catx[i]]+(maskwidth/2)*rainprop.spatialres[0], latrange[caty[i]]+(maskheight/2)*rainprop.spatialres[1]), radius = 0.2, edgecolor='green', facecolor='none',zorder = 3)
+            elif areatype.lower()=="box" or areatype.lower()=="point":
+                ax.add_geometries([ring], facecolor='none',edgecolor='red',crs=ccrs.PlateCarree(),zorder = 3)
+                circle = patches.Circle((lonrange[catx[i]] + rainprop.spatialres[0]/2, latrange[caty[i]] - rainprop.spatialres[1]/2), radius = 0.2, edgecolor='green', facecolor='none',zorder = 3)
 
-        plt.savefig(diagpath+'Storm'+str(i+1)+'_'+str(plottime[-1]).split('T')[0]+'.png',dpi=250)
-        plt.close()     
-    
+            if domain_type.lower()=="irregular" and os.path.isfile(domainshp):
+                ax.add_feature(domain_feature,edgecolor="black",facecolor="None",zorder = 3)
+                
+            temprain.plot(x='longitude', y ='latitude',cmap='Blues',cbar_kwargs={'orientation':orientation,'label':"Storm Total precipitation [mm]"}, ax=ax, zorder=1)
+           
+            ax.add_patch(circle)
+            ax.add_feature(states_provinces, zorder = 3)
+            #ax.add_feature(coast_10m)
+            ax.set_xticks(np.linspace(outerextent[0],outerextent[1],2))
+            lon_formatter = cticker.LongitudeFormatter()
+            ax.xaxis.set_major_formatter(lon_formatter)
         
-        # create hyetograph diagnostic plots:
-        selected_region = plotrain.isel(latitude=slice(caty[i], caty[i] + maskheight), 
-                                longitude=slice(catx[i], catx[i] + maskwidth))
-        masked_data = selected_region * trimmask
-        raints = masked_data.sum(dim=('latitude', 'longitude'), skipna=True) / mnorm
-        # raints=np.nansum(np.multiply(plotrain[:,caty[i]:caty[i]+maskheight,catx[i]:catx[i]+maskwidth],trimmask),axis=(1,2))/mnorm
-        fig = plt.figure()
-        ax  = fig.add_subplot(111)
-        fig.set_size_inches(6,4)
-        ax.bar(np.arange(0,raints.shape[0]*rainprop.timeres/60.,rainprop.timeres/60.), raints,width=rainprop.timeres/60., align='edge')
-        ax.set_title('Storm '+str(i+1)+': '+str(plottime[-1])
-                     +' Hyetograph\nMax Precipitation:'+str(np.round(catmax[i]))
-                     +' mm @ Lat/Lon:'+"{:6.1f}".format(np.array(plotlat[caty[i]]-(maskheight/2+maskheight%2)*rainprop.spatialres[0]))
-                     +u'\N{DEGREE SIGN}'+','+"{:6.1f}".format(np.array(plotlon[catx[i]]
-                     +(maskwidth/2+maskwidth%2)*rainprop.spatialres[0]))
-                     +u'\N{DEGREE SIGN}')
-        ax.set_xlabel('Time [hours]')
-        ax.set_ylabel('Precipitation Rate [mm/hr]')
-        plt.tight_layout()
-        plt.savefig(diagpath+'Hyetograph_Storm'+str(i+1)+'_'+str(plottime[-1]).split('T')[0]+'.png',dpi=250)
-        plt.close()
+            # Define the yticks for latitude
+            ax.set_yticks(np.linspace(outerextent[3],outerextent[2],2))
+            lat_formatter = cticker.LatitudeFormatter()
+            ax.set(xlabel=None,ylabel=None)
+            ax.yaxis.set_major_formatter(lat_formatter)
+            ax.set_title('Storm '+str(i+1)+': '+str(plottime[-1])
+                        +' Storm Total Rainfall\nMax Precipitation:'+str(np.round(catmax[i]))
+                        +' mm @ Lat/Lon:'+"{:6.1f}".format(np.array(plotlat[caty[i]]-(maskheight/2+maskheight%2)*rainprop.spatialres[0]))
+                        +u'\N{DEGREE SIGN}'+','+"{:6.1f}".format(np.array(plotlon[catx[i]]
+                        +(maskwidth/2+maskwidth%2)*rainprop.spatialres[0]))
+                        +u'\N{DEGREE SIGN}')
+
+            plt.savefig(diagpath+'Storm'+str(i+1)+'_'+str(plottime[-1]).split('T')[0]+'.png',dpi=250)
+            plt.close()     
+        
+            
+            # create hyetograph diagnostic plots:
+            selected_region = plotrain.isel(latitude=slice(caty[i], caty[i] + maskheight), 
+                                    longitude=slice(catx[i], catx[i] + maskwidth))
+            masked_data = selected_region * trimmask
+            raints = masked_data.sum(dim=('latitude', 'longitude'), skipna=True) / mnorm
+            # raints=np.nansum(np.multiply(plotrain[:,caty[i]:caty[i]+maskheight,catx[i]:catx[i]+maskwidth],trimmask),axis=(1,2))/mnorm
+            fig = plt.figure()
+            ax  = fig.add_subplot(111)
+            fig.set_size_inches(6,4)
+            ax.bar(np.arange(0,raints.shape[0]*rainprop.timeres/60.,rainprop.timeres/60.), raints,width=rainprop.timeres/60., align='edge')
+            ax.set_title('Storm '+str(i+1)+': '+str(plottime[-1])
+                        +' Hyetograph\nMax Precipitation:'+str(np.round(catmax[i]))
+                        +' mm @ Lat/Lon:'+"{:6.1f}".format(np.array(plotlat[caty[i]]-(maskheight/2+maskheight%2)*rainprop.spatialres[0]))
+                        +u'\N{DEGREE SIGN}'+','+"{:6.1f}".format(np.array(plotlon[catx[i]]
+                        +(maskwidth/2+maskwidth%2)*rainprop.spatialres[0]))
+                        +u'\N{DEGREE SIGN}')
+            ax.set_xlabel('Time [hours]')
+            ax.set_ylabel('Precipitation Rate [mm/hr]')
+            plt.tight_layout()
+            plt.savefig(diagpath+'Hyetograph_Storm'+str(i+1)+'_'+str(plottime[-1]).split('T')[0]+'.png',dpi=250)
+            plt.close()
     
     
     # PLOT STORM OCCURRENCE PROBABILITIES-there is a problem with the "alignment of the raster and the storm locations
@@ -1697,7 +1747,7 @@ if DoDiagnostics:
     padright=maskwidth-1
     
     plot_kernel=np.column_stack([np.zeros((pltkernel.shape[0],padleft)),pltkernel,np.zeros((pltkernel.shape[0],padright))])
-
+    
     #padtop=math.floor(maskheight/2)
     #padbottom=math.ceil(maskheight/2)-1
     padtop=0
@@ -1705,14 +1755,22 @@ if DoDiagnostics:
     
     plot_kernel=np.row_stack([np.zeros((padtop,plot_kernel.shape[1])),plot_kernel,np.zeros((padbottom,plot_kernel.shape[1]))])
 
-    xplot_kernel=xr.Dataset(
-        data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
-        coords=dict(
-            lat=(["y"],plotlat),
-            lon=(["x"],plotlon)),
-        attrs=dict(description="diagnostic plotting of the storm probability density"),
-    )
-    
+    if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
+        xplot_kernel=xr.Dataset(
+            data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
+            coords=dict(
+                lat=(["y"],latrange.data + (maskheight / 2) * rainprop.spatialres[1].item()),
+                lon=(["x"],lonrange.data + (maskwidth / 2) * rainprop.spatialres[0].item())),
+            attrs=dict(description="diagnostic plotting of the storm probability density"),
+        )
+    elif areatype.lower()=="box" or areatype.lower()=="point":
+        xplot_kernel=xr.Dataset(
+            data_vars=dict(plot_kernel=(["y","x"],plot_kernel)),
+            coords=dict(
+                lat=(["y"],latrange.data - rainprop.spatialres[1].item()/2),
+                lon=(["x"],lonrange.data + rainprop.spatialres[0].item()/2)),
+            attrs=dict(description="diagnostic plotting of the storm probability density"),
+        )
     
     fig = plt.figure(figsize=(figsizex,figsizey))
     ax=plt.axes(projection=proj)
@@ -1728,9 +1786,15 @@ if DoDiagnostics:
     #xplot_kernel.pltkernel.plot(x="lon",y="lat",cmap='Reds',cbar_kwargs={'orientation':orientation,'label':"Probability of storm occurrence [-]"})
         
     # plt.scatter(lonrange[catx]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty]-(maskheight/2)*rainprop.spatialres[1],s=catmax/2,facecolors='k',edgecolors='none',alpha=0.75)
-    for k in range(0,nstorms):
-        plt.scatter(plotlon[catx[k]],plotlat[caty[k]],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
-        #plt.scatter(plotlon[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],plotlat[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+    if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
+        for k in range(0,nstorms):
+            # plt.scatter(plotlon[catx[k]],plotlat[caty[k]],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+            # plt.scatter(plotlon[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],plotlat[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
+            plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
+    elif areatype.lower()=="box" or areatype.lower()=="point":
+        for k in range(0,nstorms):
+            plt.scatter(lonrange[catx[k]]+rainprop.spatialres[0]/2,latrange[caty[k]]- rainprop.spatialres[1]/2,s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
+  
 
     ax.add_feature(states_provinces)
     ax.set_xticks(np.linspace(outerextent[0],outerextent[1],2))
@@ -1765,9 +1829,13 @@ if DoDiagnostics:
         
     if domain_type.lower()=="irregular" and os.path.isfile(domainshp):
         ax.add_feature(domain_feature,edgecolor="black",facecolor="None",zorder = 3)
-    mu_t.plot(x='longitude', y ='latitude',cmap='Greens',cbar_kwargs={'orientation':orientation,'label':"Mean Storm Total precipitation [mm]"})
-    for k in range(0,nstorms):
-        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
+    mu_t.plot(x='longitude', y ='latitude',cmap='Blues',cbar_kwargs={'orientation':orientation,'label':"Mean Storm Total precipitation [mm]"})
+    if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
+        for k in range(0,nstorms):
+            plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
+    elif areatype.lower()=="box" or areatype.lower()=="point":
+        for k in range(0,nstorms):
+            plt.scatter(lonrange[catx[k]]+rainprop.spatialres[0]/2,latrange[caty[k]]- rainprop.spatialres[1]/2,s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
 
     ax.add_feature(states_provinces)
     #ax.add_feature(coast_10m)
@@ -1804,11 +1872,13 @@ if DoDiagnostics:
         
     if domain_type.lower()=="irregular" and os.path.isfile(domainshp):
         ax.add_feature(domain_feature,edgecolor="black",facecolor="None",zorder = 3)
-    
-    std_t.plot(x='longitude', y ='latitude',cmap='Greys',cbar_kwargs={'orientation':orientation,'label':"Mean Storm Total precipitation [mm]"})
-    for k in range(0,nstorms):
-        plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*2,facecolors='k',edgecolors='none',alpha=0.75)
-
+    std_t.plot(x='longitude', y ='latitude',cmap='Greys',cbar_kwargs={'orientation':orientation,'label':"STD Storm Total precipitation [mm]"})
+    if areatype.lower()=="basin" and os.path.isfile(wsmaskshp):
+        for k in range(0,nstorms):
+            plt.scatter(lonrange[catx[k]]+(maskwidth/2)*rainprop.spatialres[0],latrange[caty[k]]+(maskheight/2)*rainprop.spatialres[1],s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
+    elif areatype.lower()=="box" or areatype.lower()=="point":
+        for k in range(0,nstorms):
+            plt.scatter(lonrange[catx[k]]+rainprop.spatialres[0]/2,latrange[caty[k]]- rainprop.spatialres[1]/2,s=catmax[k]*1,facecolors='gray',edgecolors='k',alpha=0.5)
 
 
     ax.add_feature(states_provinces)
@@ -1951,14 +2021,26 @@ if FreqAnalysis:
     if durcorrection:
         whichtimeind=np.zeros((whichstorms.shape),dtype='float32')
     
-    
+    # For irregular domains under uniform transposition, we mask out border cells to avoid placing storm windows
+    # where the mask would exceed domain bounds. However, for single-pixel masks (maskheight = maskwidth = 1),
+    # this masking is unnecessary and would incorrectly remove valid storm locations.
+    # Therefore, we apply border masking only if maskheight or maskwidth is greater than 1.
+
+    # Trim all edges of the domain mask to ensure storm centroids stay within bounds.
+    # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
+    # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-        domainmask[-maskheight:,:]=0.
-        domainmask[:,-maskwidth:]=0.
+        if maskheight > 1:
+            domainmask[:maskheight, :] = 0.    # Trim northern edge
+            domainmask[-maskheight:,:]= 0.      # Trim southern edge   
+        if maskwidth > 1:
+            domainmask[:, :maskwidth] = 0.     # Trim western edge
+            domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
+
         xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
         xmask=xmask[np.equal(domainmask,True)]
         ymask=ymask[np.equal(domainmask,True)]
-        
+
     if rescaletype=='stochastic' or rescaletype=='deterministic' or rescaletype=='dimensionless':
         whichmultiplier=np.empty_like(whichrain)
         whichmultiplier[:]=np.nan
@@ -2567,7 +2649,7 @@ if FreqAnalysis:
         
         if spreadtype=='ensemble':
             spreadmin=np.nanmin(sortrain,axis=1)
-            spreadmax=np.nanmax(sortrain,axis=1)    
+            spreadmax=np.nanmax(sortrain,axis=1)   
         else:
             spreadmin=np.percentile(sortrain,(100-quantilecalc)/2,axis=1)
             spreadmax=np.percentile(sortrain,quantilecalc+(100-quantilecalc)/2,axis=1)
@@ -2599,7 +2681,7 @@ if FreqAnalysis:
         np.savetxt(FreqFile_max,freqanalysis_max,delimiter=',',header='prob.exceed,returnperiod,maxrain',fmt='%6.2f',comments='#',footer=ptlistname)
         
     else:
-        if spreadtype=='ensemble':
+        if spreadtype=='ensemble' or spreadtype=='all_realizations':
             spreadmin=np.nanmin(sortrain,axis=1)
             spreadmax=np.nanmax(sortrain,axis=1)
             spreadmean=np.nanmean(sortrain,1)
@@ -2607,9 +2689,14 @@ if FreqAnalysis:
             spreadmin=np.percentile(sortrain,(100-quantilecalc)/2,axis=1)
             spreadmax=np.percentile(sortrain,quantilecalc+(100-quantilecalc)/2,axis=1)
     
-        freqanalysis=np.column_stack((exceedp,returnperiod,spreadmin,spreadmean,spreadmax))
-        
-        np.savetxt(FreqFile,freqanalysis,delimiter=',',header='prob.exceed,returnperiod,minrain,meanrain,maxrain',fmt='%6.2f',comments='')
+        if spreadtype=='ensemble' or spreadtype=='quantile':
+            freqanalysis=np.column_stack((exceedp,returnperiod,spreadmin,spreadmean,spreadmax))
+            np.savetxt(FreqFile,freqanalysis,delimiter=',',header='prob.exceed,returnperiod,minrain,meanrain,maxrain',fmt='%6.2f',comments='')
+        elif spreadtype=='all_realizations':
+            freqanalysis=np.column_stack((exceedp,returnperiod,sortrain))
+            rlz_headers = [f'rlz{i+1}' for i in range(nrealizations)]
+            header = 'prob.exceed,returnperiod,' + ','.join(rlz_headers)
+            np.savetxt(FreqFile,freqanalysis,delimiter=',',header=header,fmt='%6.2f',comments='')
         
         import matplotlib.patches as mpatches
         from matplotlib.font_manager import FontProperties
@@ -2663,7 +2750,8 @@ if FreqAnalysis:
 
     if Scenarios:
         print("writing spacetime precipitation scenarios...")
-        
+        # Track how many storms have been written per year
+        written_per_year = {}
         # check if scenario files already exist there and if so, delete them:
         if os.path.exists(fullpath+'/Realizations') and os.path.isdir(fullpath+'/Realizations'):
             RainyDay.delete_files_in_directory(fullpath+'/Realizations')
@@ -2682,11 +2770,17 @@ if FreqAnalysis:
         # Get sorting indices based on the first channel of whichrain along the first axis
         sortind_first_axis = np.argsort(whichrain[:, :, :, 0], axis=0)
 
-        # Sort all arrays along the first axis
-        whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain), sortind_first_axis, axis=0)
-        whichstorms_sorted_first = np.take_along_axis(np.squeeze(whichstorms), sortind_first_axis, axis=0)
-        whichx_sorted_first = np.take_along_axis(np.squeeze(whichx), sortind_first_axis, axis=0)
-        whichy_sorted_first = np.take_along_axis(np.squeeze(whichy), sortind_first_axis, axis=0)
+        # # Sort all arrays along the first axis
+        # whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain), sortind_first_axis, axis=0)
+        # whichstorms_sorted_first = np.take_along_axis(np.squeeze(whichstorms), sortind_first_axis, axis=0)
+        # whichx_sorted_first = np.take_along_axis(np.squeeze(whichx), sortind_first_axis, axis=0)
+        # whichy_sorted_first = np.take_along_axis(np.squeeze(whichy), sortind_first_axis, axis=0)
+
+        # Sort all arrays along the first axis: Changed by Gabriel 2025-03-12
+        whichrain_sorted_first = np.take_along_axis(np.squeeze(whichrain, axis=3), sortind_first_axis, axis=0)
+        whichstorms_sorted_first = np.take_along_axis(whichstorms, sortind_first_axis, axis=0)
+        whichx_sorted_first = np.take_along_axis(np.squeeze(whichx, axis=3), sortind_first_axis, axis=0)
+        whichy_sorted_first = np.take_along_axis(np.squeeze(whichy, axis=3), sortind_first_axis, axis=0)
 
         # Get sorting indices based on the first channel of whichrain_sorted_first along the second axis
         sortind_second_axis = np.argsort(whichrain_sorted_first[-1, :, :],axis=0)
@@ -2735,7 +2829,8 @@ if FreqAnalysis:
                 raintime=np.concatenate([raintime,padtime])
             
             howmanystorms=np.sum(whichstorms==i)        # how many transposed storms are due to parent storm i?
-            
+            print(howmanystorms)
+
             if howmanystorms>0:
                 stormindex=np.zeros_like(whichstorms) 
                 stormindex[:]=-999

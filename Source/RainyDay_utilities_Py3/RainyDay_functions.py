@@ -74,6 +74,9 @@ warnings.filterwarnings("ignore")
 
 from numba.types import int32,int64,float32,uint32
 import linecache
+import dask
+from dask.diagnostics import ProgressBar
+from numba import njit, prange
 
 
 # =============================================================================
@@ -215,24 +218,162 @@ def catalogAlt_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rains
     # wheremax=np.where(np.equal(rainsum,rmax))
     # return rmax, wheremax[0][0], wheremax[1][0]
 
-@jit(nopython=True, fastmath =  True)
-def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
-    #
-    for y in range(0, int32(yloop)):
-        for x in range(0, int32(xloop),stride):
+# @jit(nopython=True, fastmath =  True)
+# def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop, maskheight, maskwidth, rainsum, stride=1):
+#     rainsum[:, :] = 0.0  # clear output array
 
-            rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
+#     rmax = -1e30
+#     ymax = -1
+#     xmax = -1
 
-            rainsum[y, xlen-x-1] = np.nansum(np.multiply(temparray[y:(y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
-            rainsum[ylen-y-1, x] = np.nansum(np.multiply(temparray[ylen-y-1:(ylen-y-1+maskheight), x:(x+maskwidth)], trimmask))
+#     for y in range(0, yloop):
+#         for x in range(0, xloop, stride):
+#             # Define all 4 symmetric locations
+#             positions = [
+#                 (y, x),  # original
+#                 (y, xlen - x - 1),  # x-flipped
+#                 (ylen - y - 1, x),  # y-flipped
+#                 (ylen - y - 1, xlen - x - 1)  # x & y flipped
+#             ]
+
+#             for yy, xx in positions:
+#                 # Ensure we’re within bounds
+#                 if yy + maskheight <= temparray.shape[0] and xx + maskwidth <= temparray.shape[1]:
+#                     patch = temparray[yy:yy + maskheight, xx:xx + maskwidth]
+#                     value = np.nansum(patch * trimmask)
+#                     rainsum[yy, xx] = value
+
+#                     if not np.isnan(value) and value > rmax:
+#                         rmax = value
+#                         ymax = yy
+#                         xmax = xx
+
+#     return rmax, ymax, xmax
+
+# # Testing (parallel, including symmetric positions)
+# @njit(parallel=True, fastmath=True)
+# def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop,
+#                                      maskheight, maskwidth, rainsum, stride=1):
+#     # Ensure loop bounds are integers
+#     xloop = int(xloop)
+#     yloop = int(yloop)
+#     xlen = int(xlen)
+#     ylen = int(ylen)
+
+#     # Clear rainsum
+#     rainsum[:, :] = 0.0
+
+#     # Parallel loop over y
+#     for y in prange(0, yloop):
+#         for x in range(0, xloop, stride):
+#             # Define symmetric positions
+#             positions = [
+#                 (int(y), int(x)),
+#                 (int(y), int(xlen - x - 1)),
+#                 (int(ylen - y - 1), int(x)),
+#                 (int(ylen - y - 1), int(xlen - x - 1))
+#             ]
+
+#             for yy, xx in positions:
+#                 if yy + maskheight > temparray.shape[0] or xx + maskwidth > temparray.shape[1]:
+#                     continue
+
+#                 val = 0.0
+#                 for i in range(maskheight):
+#                     for j in range(maskwidth):
+#                         a = temparray[yy + i, xx + j]
+#                         b = trimmask[i, j]
+#                         if not np.isnan(a) and not np.isnan(b):
+#                             val += a * b
+
+#                 rainsum[yy, xx] = val
+
+#     # Serial reduction to find max
+#     rmax = -1e30
+#     ymax = -1
+#     xmax = -1
+#     for y in range(rainsum.shape[0]):
+#         for x in range(rainsum.shape[1]):
+#             val = rainsum[y, x]
+#             if val > rmax:
+#                 rmax = val
+#                 ymax = y
+#                 xmax = x
+
+#     return rmax, ymax, xmax
+
+# Testing (parallel, without symmetric positions). FASTEST for large domains
+@njit(parallel=True, fastmath=True)
+def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop,
+                           maskheight, maskwidth, rainsum, stride=1):
+    # Since we are not doing symmetric positions, we can simplify the logic
+    xloop = int(xlen)
+    yloop = int(ylen)
+
+    rainsum[:, :] = 0.0
+
+    # Parallel storm scan
+    for y in prange(0, yloop):
+        for x in range(0, xloop, stride):
+            if y + maskheight > temparray.shape[0] or x + maskwidth > temparray.shape[1]:
+                continue
+
+            val = 0.0
+            for i in range(maskheight):
+                for j in range(maskwidth):
+                    a = temparray[y + i, x + j]
+                    b = trimmask[i, j]
+                    if not np.isnan(a) and not np.isnan(b):
+                        val += a * b
+
+            rainsum[y, x] = val
+
+    # --- Parallel row-wise reduction ---
+    row_max = np.full(rainsum.shape[0], -1e30)
+    row_x = np.full(rainsum.shape[0], -1, dtype=np.int32)
+
+    for y in prange(rainsum.shape[0]):
+        max_val = -1e30
+        max_x = -1
+        for x in range(rainsum.shape[1]):
+            val = rainsum[y, x]
+            if val > max_val:
+                max_val = val
+                max_x = x
+        row_max[y] = max_val
+        row_x[y] = max_x
+
+    # --- Serial reduction over rows ---
+    rmax = -1e30
+    ymax = -1
+    xmax = -1
+    for y in range(rainsum.shape[0]):
+        if row_max[y] > rmax:
+            rmax = row_max[y]
+            ymax = y
+            xmax = row_x[y]
+
+    return rmax, ymax, xmax
 
 
-            rainsum[ylen-y-1, xlen-x-1] = np.nansum(np.multiply(temparray[ylen-y:(ylen-y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
+# # Note: This version requires xlen and ylen defined in RainyDay_Py3.py defined as follow:
+# # xlen =rainprop.subdimensions[1]-maskwidth
+# # ylen =rainprop.subdimensions[0]-maskheight-2 
+# # That definition is inconsistent since it removes some edges in the padding.
+# @jit(nopython=True, fastmath =  True)
+# def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
+#     for y in range(0, int32(yloop)):
+#         for x in range(0, int32(xloop),stride):
+#             rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
+#             rainsum[y, xlen-x-1] = np.nansum(np.multiply(temparray[y:(y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))           
+#             rainsum[ylen-y-1, x] = np.nansum(np.multiply(temparray[ylen-y-1:(ylen-y-1+maskheight), x:(x+maskwidth)], trimmask))
+#             rainsum[ylen-y-1, xlen-x-1] = np.nansum(np.multiply(temparray[ylen-y:(ylen-y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
 
-    #wheremax=np.argmax(rainsum)
-    rmax=np.nanmax(rainsum)
-    wheremax=np.where(np.equal(rainsum,rmax))
-    return rmax, wheremax[0][0], wheremax[1][0]
+#     #wheremax=np.argmax(rainsum)
+#     rmax=np.nanmax(rainsum)
+#     wheremax=np.where(np.equal(rainsum,rmax))
+    
+#     return rmax, wheremax[0][0], wheremax[1][0]
 
 @jit(nopython=True,  fastmath =  True)
 def catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
@@ -1279,15 +1420,36 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=F
     """
     # infile = xr.open_dataset(rfile, drop_variables=dropvars,chunks='auto').load() if dropvars else xr.open_dataset(rfile).load()  # added DBW 07282023 to avoid reading in unnecessary variables
     rain_name,lat_name,lon_name = variables.values()
-
     if np.any(idxes!=False):
         # latmin,latmax,longmin,longmax = inbounds[2],inbounds[3],inbounds[0],inbounds[1]
         # outrain=infile[rain_name].sel(**{lat_name:slice(latmin,latmax)},\
         #                                           **{lon_name:slice(longmin,longmax)})
+
         infile = Dataset(rfile, 'r') ;
         outrain = infile.variables[rain_name][:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1];
         time_var = infile.variables['time'];time_converted = num2date(time_var, units=time_var.units, calendar=calendar);
         outtime = np.array(time_converted, dtype='datetime64[m]')
+        infile.close()
+
+        # # --- HERE
+        # # Open dataset with Dask-enabled lazy loading
+        # # Set the scheduler to use threads (great for I/O-bound tasks like NetCDF reads)
+        # dask.config.set(scheduler='threads')
+        # ds = xr.open_dataset(rfile,  decode_times=False, chunks={'time': 8, 'latitude': 295, 'longitude': 590})
+        #  # Subset the rainfall variable lazily
+        # outrain_lazy = ds[rain_name].isel(
+        #     latitude=slice(idxes[0], idxes[1]+1),
+        #     longitude=slice(idxes[2], idxes[3]+1)
+        # )
+        
+        # # Load data into memory
+        # outrain = outrain_lazy.compute().values
+        # # Convert time using provided calendar and units
+        # time_var = ds['time']
+        # time_converted = num2date(time_var.values, units=time_units, calendar=calendar)
+        # outtime = np.array(time_converted, dtype='datetime64[m]')
+        # ds.close()
+
     else:
         infile = xr.open_dataset(rfile, drop_variables=dropvars, chunks='auto').load() if dropvars else xr.open_dataset(rfile).load()
         ncfile = Dataset(rfile, 'r') ;
@@ -1298,8 +1460,8 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=F
         outlatitude=outrain[lat_name]
         outlongitude=outrain[lon_name]
         outtime=np.array(infile['time'],dtype='datetime64[m]')
-
-    infile.close()
+        infile.close()
+    
     if setup:
         return np.array(outrain),outtime,np.array(outlatitude),np.array(outlongitude),nctime
     else:
