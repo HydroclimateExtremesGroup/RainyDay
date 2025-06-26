@@ -1,0 +1,23 @@
+{
+"MAINPATH" : "/Users/daniel/iCloud/RainyDay2/Users_Guide/Examples",
+"SCENARIONAME" : "MadisonExample_IMERG",
+"RAINPATH" : "/Users/daniel/Documents/DATA/IMERG/IMERG_RainyDayFormat/2023/IMERGF.*.precip.nc",
+"CATALOGNAME" : "Madison_ExampleCatalog_IMERG_",
+"CREATECATALOG" : "true", "DURATION" :24 ,
+"NYEARS" : 500 ,
+"NSTORMS" : 40,
+"NREALIZATIONS" : 100,
+"SCENARIOS" : "false",
+"TIMESEPARATION" : 12, "DOMAINTYPE" : "rectangular",
+"AREA_EXTENT"  : {"LATITUDE_MIN":42.5,"LATITUDE_MAX":44.0,"LONGITUDE_MIN": -90.5, "LONGITUDE_MAX": -88.0},
+"DIAGNOSTICPLOTS" : "false", 
+"FREQANALYSIS" : "true", 
+"EXCLUDESTORMS" : "none",
+"INCLUDEYEARS" : "all", 
+"EXCLUDEMONTHS" : [1,2,3,12],
+"DURATIONCORRECTION" : "true", "TRANSPOSITION" : "uniform", "RESAMPLING" : "poisson", "RETURNLEVELS": [2,5,10,25,50,100,200,500],
+"POINTAREA" : "grid", "POINTLAT": 43.075 ,"POINTLON": -89.385,
+"BOX_YMIN": 42.75, "BOX_YMAX": 43.0, "BOX_XMIN": -89.5, "BOX_XMAX": -89.25,
+"CALCTYPE" : "pds",
+"VARIABLES" : {"rainname": "precipitation","latname":"latitude","longname":"longitude"}
+}
