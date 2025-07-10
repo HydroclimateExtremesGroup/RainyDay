@@ -1181,16 +1181,9 @@ if CreateCatalog:
             subtime=np.arange(raintime[-1],starttime,-timestep)[::-1]
             temparray=np.squeeze(np.nansum(rainarray[subtimeind,:],axis=1))
             
-            if domain_type=='irregular':
-                temparray = temparray * domainmask
-                # startct = time.time()
-                # start = time.time()
-                rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
-                # print(f"✅ Time elapsed: {time.time() - start:.2f} seconds")
-                # rainmax,ycat,xcat=RainyDay.catalogNumba_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask,stride=catalogstride)
-            else:
-                rainmax,ycat,xcat=RainyDay.catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
-                
+
+            rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask)
+
             minind=np.argmin(catmax)
             tempmin=catmax[minind]
             if rainmax>tempmin:
@@ -2186,11 +2179,8 @@ if FreqAnalysis:
             for j in range(0,catrain.shape[0]-int(duration*60/rainprop.timeres)):
                 maxpass=np.nansum(catrain[j:j+int(duration*60./rainprop.timeres),:],axis=0)
                 
-                if domain_type.lower()=='irregular':
-                    maxpass = maxpass * domainmask
-                    maxtemp,tempy,tempx=RainyDay.catalogNumba_irregular(maxpass,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
-                else:
-                    maxtemp,tempy,tempx=RainyDay.catalogNumba(maxpass,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=catalogstride)
+
+                maxtemp,tempy,tempx=RainyDay.catalogFFT_irregular(temparray,trimmask)
      
                 if maxtemp>dur_max:
                     dur_max=maxtemp

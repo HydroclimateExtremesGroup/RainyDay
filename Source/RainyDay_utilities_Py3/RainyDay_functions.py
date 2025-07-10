@@ -79,6 +79,47 @@ from dask.diagnostics import ProgressBar
 from numba import njit, prange
 
 
+from scipy.signal import fftconvolve
+
+
+
+
+# =============================================================================
+# FFT-based catalog creator from Gabriel Perez, added by DBW 10 July 2025
+# =============================================================================
+
+def catalogFFT_irregular(temparray, trimmask):
+    """
+    CPU version using FFT-based convolution (cross-correlation equivalent to manual loop).
+
+    Parameters:
+    -----------
+    temparray : np.ndarray
+        2D rainfall field (float32 or float64)
+    trimmask : np.ndarray
+        2D storm mask kernel (float32 or float64)
+
+    Returns:
+    --------
+    rmax : float
+        Maximum value of convolution
+    ymax, xmax : int
+        Location (row, col) of maximum alignment
+    """
+    # Clean NaNs
+    temparray_clean = np.nan_to_num(temparray)
+    trimmask_clean = np.nan_to_num(trimmask)
+
+    # Cross-correlation (no flipping of mask)
+    result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
+
+    # Find max value and its location
+    rmax = np.max(result)
+    ymax, xmax = np.unravel_index(np.argmax(result), result.shape)
+
+    return float(rmax), int(ymax), int(xmax)
+
+
 # =============================================================================
 # Smoother that is compatible with nan values. Adapted from https://stackoverflow.com/questions/18697532/gaussian-filtering-a-image-with-nan-in-python
 # =============================================================================

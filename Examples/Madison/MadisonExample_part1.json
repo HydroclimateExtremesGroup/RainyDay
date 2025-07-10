@@ -1,7 +1,7 @@
 {
 "MAINPATH" : "/Users/daniel/iCloud/RainyDay2/Users_Guide/Examples",
 "SCENARIONAME" : "MadisonExample_AORC",
-"RAINPATH" : "/Users/daniel/Documents/DATA/AORC/ProcessedAORC/AORC.*.precip.nc",
+"RAINPATH" : "/Users/daniel/Documents/DATA/AORC/AORCprecip/*/AORC.*.precip.nc",
 "CATALOGNAME" : "Madison_ExampleCatalog_AORC_",
 "CREATECATALOG" : "true", "DURATION" :24 ,
 "NYEARS" : 500 ,
