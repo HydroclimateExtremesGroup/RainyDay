@@ -2024,11 +2024,11 @@ if FreqAnalysis:
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
         if maskheight > 1:
-            domainmask[:maskheight, :] = 0.    # Trim northern edge
+            #domainmask[:maskheight, :] = 0.    # Trim northern edge
             domainmask[-maskheight:,:]= 0.      # Trim southern edge   
         if maskwidth > 1:
             domainmask[:, :maskwidth] = 0.     # Trim western edge
-            domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
+            #domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
 
         xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
         xmask=xmask[np.equal(domainmask,True)]

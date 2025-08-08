@@ -80,7 +80,7 @@ from numba import njit, prange
 
 
 from scipy.signal import fftconvolve
-
+from scipy.signal import oaconvolve
 
 
 
@@ -112,6 +112,7 @@ def catalogFFT_irregular(temparray, trimmask):
 
     # Cross-correlation (no flipping of mask)
     result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
+    #result = oaconvolve(temparray_clean, trimmask_clean, mode='valid')
 
     # Find max value and its location
     rmax = np.max(result)
@@ -506,7 +507,7 @@ def DistributionBuilderFast(intenserain,tempmax,xlen,ylen,checksep):
 #    return rainsum
 
 
-@jit(fastmath=True)
+#@jit(nopython=True,fastmath=True)
 def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,intensestd=None,intensecorr=None,homemean=None,homestd=None,durcheck=False):
     maxmultiplier=1.5
     
