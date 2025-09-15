@@ -1,0 +1,24 @@
+name: rainyday
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - numpy
+  - pandas
+  - matplotlib
+  - scipy
+  - netcdf4
+  - xarray
+  - cartopy
+  - geopandas
+  - rasterio
+  - scikit-learn
+  - numba=0.55
+  - dask
+  - pip
+  - plotly
+  - pyshp
+  - rioxarray
+  - pip:
+    - matplotlib
