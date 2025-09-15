@@ -1,4 +1,9 @@
 name: rainyday
+
+# errors were occouring because of incompatibility between conda forge and default. conda forge is open source 
+# whereas default repo is managed by conda. now all libraries will come from conda-forge unless they are explcitly
+# present in default. 
+
 channels:
   - conda-forge
   - defaults
