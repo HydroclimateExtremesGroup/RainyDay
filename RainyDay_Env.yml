@@ -1,0 +1,28 @@
+name: RainyDay_Env
+
+# errors were occouring because of incompatibility between conda forge and default. conda forge is open source 
+# whereas default repo is managed by conda. now all libraries will come from conda-forge unless they are explcitly
+# present in default. 
+
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.8
+  - numpy
+  - pandas
+  - scipy
+  - netcdf4
+  - xarray
+  - cartopy
+  - geopandas
+  - rasterio
+  - scikit-learn
+  - numba=0.55
+  - dask
+  - pip
+  - plotly
+  - pyshp
+  - rioxarray
+  - pip:
+    - matplotlib
