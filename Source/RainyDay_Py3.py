@@ -127,8 +127,8 @@ print('''Welcome to RainyDay, a framework for coupling remote sensing precipitat
 start = time.time()
 parameterfile='ttt'
 try:
-    parameterfile=sys.argv[1]
-    #parameterfile='/Users/daniel/Google_Drive/RainyDay2/Summer2023_RefactorTesting/CONUS_Madison.json'
+    #parameterfile=sys.argv[1]
+    parameterfile='/Users/daniel/Documents/RainyDay/RainyDay/Examples/BigThompson/BigThompsonExample.json'
     print("reading in the parameter file...")
     ### Cardinfo takes in the  'JSON' file parameters
     with open(parameterfile, 'r') as read_file:
@@ -964,7 +964,6 @@ if CreateCatalog:
     
             # DBW 08072023-this is to ensure consistency in orientation with precipitation fields from xarray:
             catmask=np.flipud(catmask)
-            #catmask=catmask.reshape(ingridx.shape,order='F')
     elif areatype=="point":
         catmask=np.zeros((rainprop.subdimensions))
         yind=np.where((np.array(latrange)-ptlat)>0)[0][0]  # DBW 08082023: fixed this to account for the flipped north-south grid
@@ -1062,21 +1061,7 @@ halfheight=np.int32(np.ceil(maskheight/2))
 halfwidth=np.int32(np.ceil(maskwidth/2))
 
 if CreateCatalog:
-    if ncfdom:
-        sys.exit("This isn't set up :(")
-        ingridx_dom,ingridy_dom=np.meshgrid(domainlon,domainlat)        
-    
-        ingrid_domain=np.column_stack((ingridx_dom.flatten(),ingridy_dom.flatten())) 
-        #ingridx,ingridy=np.meshgrid(np.arange(rainprop.subextent[0],rainprop.subextent[1]-rainprop.spatialres[0]/1000,rainprop.spatialres[0]),np.arange(rainprop.subextent[3],rainprop.subextent[2]+rainprop.spatialres[1]/1000,-rainprop.spatialres[1]))        
-        grid_rainfall=np.column_stack((ingridx.flatten(),ingridy.flatten())) 
-        
-        delaunay=sp.spatial.qhull.Delaunay(ingrid_domain)
-        interp=sp.interpolate.NearestNDInterpolator(delaunay,domainmask.flatten())
-    
-        # in case you want it back in a rectangular grid:
-        domainmask=np.reshape(interp(grid_rainfall),ingridx.shape)    
-    
-    elif domain_type.lower()=='irregular' and shpdom and CreateCatalog:
+    if domain_type.lower()=='irregular' and shpdom and CreateCatalog:
         domainmask=RainyDay.rastermask(domainshp,rainprop,'simple').astype('float32')
         # DBW 08072023-this is to ensure consistency in orientation with precipitation fields from xarray:
         domainmask=np.flipud(domainmask)
@@ -2024,11 +2009,11 @@ if FreqAnalysis:
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
         if maskheight > 1:
-            #domainmask[:maskheight, :] = 0.    # Trim northern edge
-            domainmask[-maskheight:,:]= 0.      # Trim southern edge   
+            #domainmask[:maskheight, :] = 0.    # Trim southern edge-confusing because the domain is flipped N-S for consistency with xarray
+            domainmask[-maskheight:,:]= 0.      # Trim northern edge-confusing because the domain is flipped N-S for consistency with xarray 
         if maskwidth > 1:
-            domainmask[:, :maskwidth] = 0.     # Trim western edge
-            #domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
+            #domainmask[:, :maskwidth] = 0.     # Trim western edge
+            domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
 
         xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
         xmask=xmask[np.equal(domainmask,True)]
