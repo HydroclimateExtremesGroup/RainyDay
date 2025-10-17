@@ -97,10 +97,10 @@ Container Directory Structure:
 |-----------|----------------|-------------|
 | `path/to/output` | `/output` | Bidirectional directory mapping |
 
-**Volume Mapping**: `-v /host/output:/output`
-- **Host side**: `/host/output` (on your local computer)
+**Volume Mapping**: `-v path/to/output:/output`
+- **Host side**: `path/to/output` (on your local computer)
 - **Container side**: `/output` (inside Docker container)
-- **Result**: Files written to `/output` in container appear in `/host/output` on your machine
+- **Result**: Files written to `/output` in container appear in `path/to/output` on your machine
 
 ---
 
@@ -120,7 +120,7 @@ Your JSON parameter file **must use container paths**:
 ```
 
 ### ❌ Incorrect Paths:
-- `"MAINPATH": "/host/output"` (host path)
+- `"MAINPATH": "path/to/output"` (host path)
 - `"MAINPATH": "./output"` (relative path)
 
 ### ✅ Correct Container Path:

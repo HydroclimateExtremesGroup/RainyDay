@@ -75,12 +75,12 @@ docker build -f Dockerfile -t rainyday_img:latest .
 ### Step 2: Create Host Output Directory
 ```bash
 # Create output directory (Docker will create with root permissions if not pre-created)
-mkdir -p /host/output
+mkdir -p path/to/output
 ```
 
 ### Step 3: Run the Container
 ```bash
-docker run -v /host/output:/output rainyday_img:latest params
+docker run -v path/to/output:/output rainyday_img:latest params
 ```
 
 **Note**: Replace `params` with your actual parameter file path (e.g., `/output/your_params.json`)
@@ -106,12 +106,12 @@ Container Directory Structure:
 
 | Host Path | Container Path | Description |
 |-----------|----------------|-------------|
-| `/host/output` | `/output` | Bidirectional directory mapping |
+| `path/to/output` | `/output` | Bidirectional directory mapping |
 
-**Volume Mapping**: `-v /host/output:/output`
-- **Host side**: `/host/output` (on your local computer)
+**Volume Mapping**: `-v path/to/output:/output`
+- **Host side**: `path/to/output` (on your local computer)
 - **Container side**: `/output` (inside Docker container)
-- **Result**: Any files written to `/output` in the container appear in `/host/output` on your machine
+- **Result**: Any files written to `/output` in the container appear in `path/to/output` on your machine
 
 ---
 
@@ -131,7 +131,7 @@ Your JSON parameter file **must use container paths**:
 ```
 
 ### ❌ Incorrect Paths:
-- `"MAINPATH": "/host/output"` (host path)
+- `"MAINPATH": "path/to/output"` (host path)
 - `"MAINPATH": "./output"` (relative path)
 
 ### ✅ Correct Container Path:
