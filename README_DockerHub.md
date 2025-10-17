@@ -58,7 +58,7 @@ If you have compatibility issues, use the [local build guide](README_LocalBuild.
 
 ### Step 1: Pull the RainyDay Image
 ```bash
-docker pull adityagoyal333/Rainyday:rainyday_img
+docker pull adityagoyal333/rainyday:rainyday_img
 ```
 
 ### Step 2: Create Host Output Directory
@@ -69,7 +69,7 @@ mkdir -p path/to/output
 
 ### Step 3: Run the Container
 ```bash
-docker run -v path/to/output:/output adityagoyal333/Rainyday:rainyday_img params
+docker run -v path/to/output:/output adityagoyal333/rainyday:rainyday_img params
 ```
 
 **Note**: Replace `params` with your actual parameter file path (e.g., `/output/your_params.json`) and other params that you need to list
