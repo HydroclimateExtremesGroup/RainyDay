@@ -202,7 +202,6 @@ Your `params.json` file **must use container paths**, not host paths:
 ---
 
 ## Troubleshooting
-
 - **Docker not running:** Start Docker Desktop or Docker daemon
 - **Build fails:** Check that all required files are present
 - **Permission issues:** The script creates `./output` with proper permissions
