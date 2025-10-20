@@ -61,18 +61,47 @@ If you have compatibility issues, use the [local build guide](README_LocalBuild.
 docker pull adityagoyal333/rainyday:rainyday_img
 ```
 
-### Step 2: Create Host Output Directory
-```bash
-# Create output directory on your local machine
-mkdir -p path/to/output
+## Required Files Structure
+
+### Host Directory Structure
+Organize your files on your local machine as follows:
+
+```
+RainyDay/
+├── Dockerfile                   # Docker build instructions
+├── RainyDay_Env.yml            # Conda environment file
+├── Source/                     # Source code directory
+│   ├── RainyDay_Py3.py        # Main application
+│   └── RainyDay_utilities_Py3/
+│       └── RainyDay_functions.py
+├── input_data/                 # CREATE THIS - Input files directory
+│   ├── precipitation_files/    # Your .nc files go here
+│   │   ├── AORC.19790201.precip.nc
+│   │   ├── AORC.19790202.precip.nc
+│   │   └── ...
+│   └── params.json            # Your parameter configuration file
+└── output/                    # CREATE THIS - Results will appear here
 ```
 
-### Step 3: Run the Container
+### Step 1: Set Up Input Data
 ```bash
-docker run -v path/to/output:/output adityagoyal333/rainyday:rainyday_img params
+# Create required directories
+mkdir -p input_data/precipitation_files
+mkdir -p output
+
+# Place your .nc precipitation files in input_data/precipitation_files/
+# Place your params.json in input_data/
 ```
 
-**Note**: Replace `params` with your actual parameter file path (e.g., `/output/your_params.json`) and other params that you need to list
+### Step 2: Run the Container with Volume Mounts
+```bash
+docker run \
+  -v $(pwd)/input_data:/input \
+  -v $(pwd)/output:/output \
+  adityagoyal333/rainyday:rainyday_img /input/params.json
+```
+
+**Important**: The container can **only access files through volume mounts**. It cannot see files elsewhere on your system.
 
 ---
 
@@ -84,46 +113,95 @@ Container Directory Structure:
 /
 ├── RainyDay_Py3.py              # Main application entry point
 ├── RainyDay_utilities_Py3/
-│   └── RainyDay_functions.py    # Utility functions and dependencies
+│   └── RainyDay_functions.py    # Utility functions
 ├── RainyDay_Env.yml             # Conda environment configuration
-└── output/                      # Your mounted directory (volume)
-    ├── params.json              # Your parameter file
-    └── [generated files]        # Output files created by RainyDay
+├── input/                       # Your input data (mounted)
+│   ├── precipitation_files/     # Your .nc files
+│   │   ├── AORC.19790201.precip.nc
+│   │   └── ...
+│   └── params.json              # Your parameter file
+└── output/                      # Your output directory (mounted)
+    └── [generated files]        # Results created by RainyDay
 ```
 
-### Host-Container Directory Link
+### Host-Container Directory Mapping
 
 | Host Path | Container Path | Description |
 |-----------|----------------|-------------|
-| `path/to/output` | `/output` | Bidirectional directory mapping |
+| `$(pwd)/input_data` | `/input` | Input files and parameters |
+| `$(pwd)/output` | `/output` | Generated results and outputs |
 
-**Volume Mapping**: `-v path/to/output:/output`
-- **Host side**: `path/to/output` (on your local computer)
-- **Container side**: `/output` (inside Docker container)
-- **Result**: Files written to `/output` in container appear in `path/to/output` on your machine
+**Volume Mapping**: 
+- `-v $(pwd)/input_data:/input` - Maps your local input_data folder to container's /input
+- `-v $(pwd)/output:/output` - Maps your local output folder to container's /output
 
 ---
 
 ## Parameter File Configuration
 
 ### Critical Path Settings
-Your JSON parameter file **must use container paths**:
+Your `params.json` file **must use container paths**, not host paths:
 
 ```json
 {
-  "MAINPATH": "/output",           # Always use container path
+  "MAINPATH": "/output",                           # Container output path
+  "RAINPATH": "/input/precipitation_files",       # Container input path for .nc files
   "SCENARIONAME": "my_scenario",
-  "CREATECATALOG": "true",
   "CATALOGNAME": "my_catalog",
-  "VARIABLES": ["precipitation", "latitude", "longitude"]
+  "CREATECATALOG": "true",
+  "DURATION": 24,
+  "NYEARS": 500,
+  "NSTORMS": 40,
+  "NREALIZATIONS": 100,
+  "SCENARIOS": "false",
+  "TIMESEPARATION": 12,
+  "DOMAINTYPE": "rectangular",
+  "AREA_EXTENT": {
+    "LATITUDE_MIN": 42.5,
+    "LATITUDE_MAX": 44.0,
+    "LONGITUDE_MIN": -90.5,
+    "LONGITUDE_MAX": -88.0
+  },
+  "DIAGNOSTICPLOTS": "false",
+  "FREQANALYSIS": "true",
+  "EXCLUDESTORMS": "none",
+  "INCLUDEYEARS": "all",
+  "EXCLUDEMONTHS": [1, 2, 3, 12],
+  "DURATIONCORRECTION": "true",
+  "TRANSPOSITION": "uniform",
+  "RESAMPLING": "poisson",
+  "RETURNLEVELS": [2, 5, 10, 25, 50, 100, 200, 500],
+  "POINTAREA": "grid",
+  "POINTLAT": 43.075,
+  "POINTLON": -89.385,
+  "BOX_YMIN": 42.75,
+  "BOX_YMAX": 43.0,
+  "BOX_XMIN": -89.5,
+  "BOX_XMAX": -89.25,
+  "CALCTYPE": "pds",
+  "VARIABLES": {
+    "rainname": "precipitation",
+    "latname": "latitude",
+    "longname": "longitude"
+  }
 }
 ```
 
-### ❌ Incorrect Paths:
-- `"MAINPATH": "path/to/output"` (host path)
-- `"MAINPATH": "./output"` (relative path)
+### ❌ Incorrect Paths (Host Paths):
+```json
+{
+  "MAINPATH": "/Users/your_username/Desktop/output",     # Wrong - host path
+  "RAINPATH": "./input_data/precipitation_files",       # Wrong - relative path
+  "RAINPATH": "/absolute/host/path/to/files"            # Wrong - host path
+}
+```
 
-### ✅ Correct Container Path:
-- `"MAINPATH": "/output"` (container internal path)
+### ✅ Correct Paths (Container Paths):
+```json
+{
+  "MAINPATH": "/output",                                 # Correct - container path
+  "RAINPATH": "/input/precipitation_files",             # Correct - container path
+}
+```
 
 ---
