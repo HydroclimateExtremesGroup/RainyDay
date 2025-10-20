@@ -126,6 +126,11 @@ print('''Welcome to RainyDay, a framework for coupling remote sensing precipitat
 #==============================================================================
 start = time.time()
 parameterfile='ttt'
+
+if(len(sys.argv))<=1:
+    print("You either didn't specify a parameter file, or it doesn't exist on the source path given.")
+    exit(1)
+    
 try:
     parameterfile=sys.argv[1]
     #parameterfile='/Users/daniel/Google_Drive/RainyDay2/Summer2023_RefactorTesting/CONUS_Madison.json'
