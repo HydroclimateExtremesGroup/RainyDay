@@ -74,7 +74,7 @@ RainyDay/
 │   ├── RainyDay_Py3.py        # Main application
 │   └── RainyDay_utilities_Py3/
 │       └── RainyDay_functions.py
-├── input_data/                 # CREATE THIS - Input files directory
+├── input/                 # CREATE THIS - Input files directory
 │   ├── precipitation_files/    # Your .nc files go here
 │   │   ├── AORC.19790201.precip.nc
 │   │   ├── AORC.19790202.precip.nc
@@ -86,17 +86,17 @@ RainyDay/
 ### Step 1: Set Up Input Data
 ```bash
 # Create required directories
-mkdir -p input_data/precipitation_files
+mkdir -p input/precipitation_files
 mkdir -p output
 
-# Place your .nc precipitation files in input_data/precipitation_files/
-# Place your params.json in input_data/
+# Place your .nc precipitation files in input/precipitation_files/
+# Place your params.json in input/
 ```
 
 ### Step 2: Run the Container with Volume Mounts
 ```bash
 docker run \
-  -v $(pwd)/input_data:/input \
+  -v $(pwd)/input:/input \
   -v $(pwd)/output:/output \
   adityagoyal333/rainyday:rainyday_img /input/params.json
 ```
@@ -128,11 +128,11 @@ Container Directory Structure:
 
 | Host Path | Container Path | Description |
 |-----------|----------------|-------------|
-| `$(pwd)/input_data` | `/input` | Input files and parameters |
+| `$(pwd)/input` | `/input` | Input files and parameters |
 | `$(pwd)/output` | `/output` | Generated results and outputs |
 
 **Volume Mapping**: 
-- `-v $(pwd)/input_data:/input` - Maps your local input_data folder to container's /input
+- `-v $(pwd)/input:/input` - Maps your local input folder to container's /input
 - `-v $(pwd)/output:/output` - Maps your local output folder to container's /output
 
 ---
@@ -191,7 +191,7 @@ Your `params.json` file **must use container paths**, not host paths:
 ```json
 {
   "MAINPATH": "/Users/your_username/Desktop/output",     # Wrong - host path
-  "RAINPATH": "./input_data/precipitation_files",       # Wrong - relative path
+  "RAINPATH": "./input/precipitation_files",       # Wrong - relative path
   "RAINPATH": "/absolute/host/path/to/files"            # Wrong - host path
 }
 ```
