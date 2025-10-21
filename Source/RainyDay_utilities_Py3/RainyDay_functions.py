@@ -507,6 +507,19 @@ def DistributionBuilderFast(intenserain,tempmax,xlen,ylen,checksep):
 #    return rainsum
 
 
+
+
+# sstx=whichx[whichstorms==i,pt]
+# ssty=whichy[whichstorms==i,pt]
+# durcheck=durcorrection                
+# intensemean=None
+# intensestd=None
+# intensecorr=None
+# homemean=None
+# homestd=None
+
+
+
 #@jit(nopython=True,fastmath=True)
 def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,intensestd=None,intensecorr=None,homemean=None,homestd=None,durcheck=False):
     maxmultiplier=1.5
@@ -590,8 +603,8 @@ def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,int
 
 #@jit(nopython=True,fastmath=True,parallel=True)
 @jit(nopython=True,fastmath=True)
-def numba_multimask_calc(passrain,trimmask,ssty,sstx,maskheight,maskwidth):
-    train=np.multiply(passrain[ssty : ssty+maskheight , sstx : sstx+maskwidth],trimmask)
+def numba_multimask_calc(passrain_temp,trimmask,y,x,maskheight,maskwidth):
+    train=np.multiply(passrain_temp[y : y+maskheight , x : x+maskwidth],trimmask)
     rainsum=np.sum(train)       
     return rainsum
 
@@ -1468,8 +1481,8 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=F
         #                                           **{lon_name:slice(longmin,longmax)})
 
         infile = Dataset(rfile, 'r') ;
-        outrain = infile.variables[rain_name][:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1];
-        time_var = infile.variables['time'];time_converted = num2date(time_var, units=time_var.units, calendar=calendar);
+        outrain = infile.variables[rain_name][:, idxes[0]:idxes[1]+1, idxes[2]:idxes[3]+1]
+        time_var = infile.variables['time'];time_converted = num2date(time_var, units=time_var.units, calendar=calendar)
         outtime = np.array(time_converted, dtype='datetime64[m]')
         infile.close()
 
