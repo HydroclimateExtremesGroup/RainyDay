@@ -1,7 +1,7 @@
 {
 "MAINPATH" : "/output",
 "SCENARIONAME" : "test_example",
-"RAINPATH" : "/input/precipitation_files",
+"RAINPATH" : "/input/precipitation_files/AORC.19790201.precip.nc",
 "CATALOGNAME" : "Madison_ExampleCatalog_IMERG_",
 "CREATECATALOG" : "true", "DURATION" :24 ,
 "NYEARS" : 500 ,
