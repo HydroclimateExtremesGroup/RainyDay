@@ -126,6 +126,10 @@ print('''Welcome to RainyDay, a framework for coupling remote sensing precipitat
 #==============================================================================
 start = time.time()
 parameterfile='ttt'
+
+if(len(sys.argv))<=1:
+    sys.exit("You didn't specify a parameter file")
+    
 try:
     #parameterfile=sys.argv[1]
     parameterfile='/Users/daniel/Documents/RainyDay/RainyDay/Examples/BigThompson/BigThompsonExample.json'
@@ -134,7 +138,7 @@ try:
     with open(parameterfile, 'r') as read_file:
         cardinfo = json.loads(read_file.read(), object_pairs_hook=RainyDay.dict_raise_on_duplicates)   # the "hook" catches instances of duplicate keys in the json file
 except FileNotFoundError:
-    print("You either didn't specify a parameter file, or it doesn't exist on the source path given.")
+    sys.exit(" The parameter file doesn't exist on the source path given.")
 #%%
 
 
