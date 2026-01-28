@@ -131,8 +131,8 @@ if(len(sys.argv))<=1:
     sys.exit("You didn't specify a parameter file")
 
 try:
-    #parameterfile=sys.argv[1]
-    parameterfile='/Users/daniel/Documents/RainyDay/RainyDay/Examples/BigThompson/BigThompsonExample.json'
+    parameterfile=sys.argv[1]
+    # parameterfile='/Users/daniel/Documents/RainyDay/RainyDay/Examples/BigThompson/BigThompsonExample.json'
     print("reading in the parameter file...")
     ### Cardinfo takes in the  'JSON' file parameters
     with open(parameterfile, 'r') as read_file:
@@ -2025,6 +2025,16 @@ if FreqAnalysis:
         xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
         xmask=xmask[np.equal(domainmask,True)]
         ymask=ymask[np.equal(domainmask,True)]
+
+    # Correcting rainprop.bndbox for the alignment of coordinates when rescaling.
+    # When CreateCatalog = true, rainprop.bndbox is the same as CONUS, which causes problems for reading the quantile maps
+    # SO, reduce bndbox from CONUS to local scale (transposition domain)
+    rainprop.bndbox = [
+        np.float64(lonrange.min()),
+        np.float64(lonrange.max()),
+        np.float64(latrange.min()),
+        np.float64(latrange.max())
+    ]
 
     if rescaletype=='dimensionless' and Scenarios==False:
         top_whichrain = np.full((1, whichrain.shape[1], whichrain.shape[2]), -9999.0, dtype='float32')
