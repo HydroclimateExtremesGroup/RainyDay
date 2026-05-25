@@ -84,6 +84,71 @@ from scipy.signal import oaconvolve
 
 
 
+
+# =============================================================================
+# CC Temperature simulation, added by Ashar 12 May 2026
+# =============================================================================
+
+
+def simulate_prestorm_temperatures_selfcalibrated(
+    basin_rainfall,
+    cc_rate=0.07,
+    T_mean=20.0,
+    sigma=3.0,
+    T_min=-5.0,
+    T_max=35.0,
+    seed=None,
+):
+    """
+    Simulate pre-storm temperatures directly from basin rainfall totals.
+    Anchors (P_ref, T_ref) are derived internally from the data itself.
+
+    Parameters
+    ----------
+    basin_rainfall : array-like
+        Areal-mean storm rainfall totals (mm) from RainyDay storm catalog.
+    cc_rate : float
+        CC scaling rate (default 0.07 = 7% per °C).
+    T_mean : float
+        Target mean temperature (°C) for your region/season.
+        This is the ONLY value you need to provide — set it from
+        climatology (e.g. mean summer T for your region).
+    sigma : float
+        Std. dev. of Gaussian noise (°C). Controls looseness of CC relation.
+    T_min, T_max : float
+        Physical clipping bounds (°C).
+    seed : int or None
+        RNG seed for reproducibility.
+
+    Returns
+    -------
+    T_sim : np.ndarray
+        Simulated pre-storm temperatures (°C), one per storm.
+    P_ref : float
+        Derived reference rainfall (mm).
+    T_ref : float
+        Derived reference temperature (°C).
+    """
+    rng = np.random.default_rng(seed)
+    P = np.asarray(basin_rainfall, dtype=float)
+
+    if np.any(P <= 0):
+        raise ValueError("All basin rainfall values must be positive.")
+
+    # --- Derive anchors from the data itself ---
+    P_ref = float(np.median(P))          # median storm = reference storm
+    T_ref = T_mean                        # reference T = your regional mean
+
+    # --- CC inversion: expected T for each storm ---
+    alpha     = np.log(1.0 + cc_rate)
+    T_expected = T_ref + (1.0 / alpha) * np.log(P / P_ref)
+
+    # --- Add stochastic noise ---
+    T_sim = T_expected + rng.normal(0.0, sigma, size=P.shape)
+
+    return np.clip(T_sim, T_min, T_max), P_ref, T_ref
+
+
 # =============================================================================
 # FFT-based catalog creator from Gabriel Perez, added by DBW 10 July 2025
 # =============================================================================
@@ -609,8 +674,36 @@ def numba_multimask_calc(passrain_temp,trimmask,y,x,maskheight,maskwidth):
     return rainsum
 
 
+# Added by Ashar on 2026-05-20: added T_orig, T_resampled, cc_rate for CC temperature scaling in point mode
 @jit(fastmath=True)
-def SSTalt_singlecell(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,intensestd=None,intensecorr=None,homemean=None,homestd=None,durcheck=False):
+def SSTalt_singlecell(passrain, sstx, ssty, trimmask, maskheight, maskwidth,
+                      intensemean=None, intensestd=None, intensecorr=None,
+                      homemean=None, homestd=None, durcheck=False,
+                      T_orig=None, T_resampled=None, cc_rate=0.07):
+    """
+    Single-cell rainfall extraction for point-mode SST.
+
+    Args:
+        passrain (np.ndarray): 2D (ny,nx) if durcheck=False, 3D (nsteps,ny,nx) if durcheck=True
+        sstx (np.ndarray): transposition x positions, one per realization
+        ssty (np.ndarray): transposition y positions, one per realization
+        trimmask (np.ndarray): watershed mask (accepted for API consistency, not used)
+        maskheight (int): mask height (accepted for API consistency, not used)
+        maskwidth (int): mask width (accepted for API consistency, not used)
+        intensemean (np.ndarray): mean intensity field for deterministic/stochastic rescaling
+        intensestd (np.ndarray): std intensity field for stochastic rescaling
+        intensecorr (np.ndarray): intensity correlation field for stochastic rescaling
+        homemean (float): home-location mean intensity for rescaling
+        homestd (float): home-location std intensity for stochastic rescaling
+        durcheck (bool): if True, find the peak duration timestep
+        T_orig (float): pre-storm temperature of the original catalog storm (°C)
+        T_resampled (np.ndarray): resampled temperatures, one per realization (°C)
+        cc_rate (float): empirical CC scaling rate (default 0.07 = 7%/°C)
+
+    Returns:
+        no rescaling: rainsum (float32), whichstep (int32)
+        with rescaling/tempscaling: rainsum (float32), multiout (float32), whichstep (int32)
+    """
     rainsum=np.zeros((len(sstx)),dtype='float32')
     whichstep=np.zeros((len(sstx)),dtype='int32')
     nreals=len(rainsum)
@@ -621,9 +714,9 @@ def SSTalt_singlecell(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intenseme
     if (intensemean is not None) and (homemean is not None):
         domean=True
     else:
-        domean=False       
+        domean=False
 
-    # do we do stochastic rescaling?    
+    # do we do stochastic rescaling?
     if (intensestd is not None) and (intensecorr is not None) and (homestd is not None):
         rquant=np.random.random_sample(size=nreals)
         inverrf=sp.special.erfinv(2.*rquant-1.)
@@ -634,17 +727,22 @@ def SSTalt_singlecell(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intenseme
 
     if durcheck==False:
         passrain=np.expand_dims(passrain,0)
-       
+
     # deterministic or dimensionless:
     if domean and doall==False:
         rain,multi,step=killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=durcheck,intensemean=intensemean,homemean=homemean,multiout=multiout)
         return rain,multi,step
-    
+
     # stochastic:
     elif doall:
         rain,multi,step=killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=durcheck,intensemean=intensemean,intensestd=intensestd,intensecorr=intensecorr,homemean=homemean,homestd=homestd,multiout=multiout,inverrf=inverrf)
         return rain,multi,step
-    
+
+    # Added by Ashar on 2026-05-20: CC temperature scaling for point mode
+    elif (T_orig is not None) and (T_resampled is not None):
+        rain,multi,step=killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=durcheck,multiout=multiout,T_orig=T_orig,T_resampled=T_resampled,cc_rate=cc_rate)
+        return rain,multi,step
+
     # no rescaling:
     else:
         rain,_,step=killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=durcheck,multiout=multiout)
@@ -652,23 +750,75 @@ def SSTalt_singlecell(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intenseme
     
 
 
+# Added by Ashar on 2026-05-19: CC temperature scaling variant of SSTalt
+def SSTalt_tempscaling(passrain, sstx, ssty, trimmask, maskheight, maskwidth,
+                       T_orig, T_resampled, cc_rate=0.07, durcheck=False):
+    # passrain    (np.ndarray) — storm rainfall array from catalog
+    # sstx, ssty  (np.ndarray) — transposition x/y positions, one per realization
+    # trimmask    (np.ndarray) — watershed mask
+    # maskheight, maskwidth (int) — mask dimensions in grid cells
+    # T_orig      (float)      — pre-storm temperature of the original catalog storm (°C)
+    # T_resampled (np.ndarray) — resampled temperatures, one per realization (°C)
+    # cc_rate     (float)      — empirical CC scaling rate (default 0.07 = 7%/°C)
+    # durcheck    (bool)       — if True, find the peak duration timestep
+    # Returns: rainsum (float32), multiout (float32), whichstep (int32)
+    rainsum   = np.zeros((len(sstx)), dtype='float32')
+    whichstep = np.zeros((len(sstx)), dtype='int32')
+    nreals    = len(rainsum)
+    nsteps    = passrain.shape[0]
+    multiout  = np.empty_like(rainsum)
+
+    if durcheck == False:
+        exprain = np.expand_dims(passrain, 0)
+    else:
+        exprain = passrain
+
+    for k in range(0, nreals):
+        y = int(ssty[k])
+        x = int(sstx[k])
+        if np.all(np.less(exprain[:, y:y+maskheight, x:x+maskwidth], 0.5)):
+            rainsum[k]  = 0.
+            multiout[k] = -999.
+        else:
+            multiplier  = np.exp(cc_rate * (T_resampled[k] - T_orig))
+            multiout[k] = multiplier
+
+            if durcheck == True:
+                storesum  = 0.
+                storestep = 0
+                for kk in range(0, nsteps):
+                    tempsum = numba_multimask_calc(passrain[kk, :], trimmask, y, x,
+                                                   maskheight, maskwidth) * multiplier
+                    if tempsum > storesum:
+                        storesum  = tempsum
+                        storestep = kk
+                rainsum[k]   = storesum
+                whichstep[k] = storestep
+            else:
+                rainsum[k] = numba_multimask_calc(passrain, trimmask, y, x,
+                                                   maskheight, maskwidth) * multiplier
+
+    return rainsum, multiout, whichstep
+
+
 #@jit(nopython=True,fastmath=True,parallel=True)
+# Added by Ashar on 2026-05-20: added T_orig, T_resampled, cc_rate for CC temperature scaling in point mode
 @jit(nopython=True,fastmath=True)
-def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=False,intensemean=None,homemean=None,homestd=None,multiout=None,rquant=None,intensestd=None,intensecorr=None,inverrf=None):
+def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=False,intensemean=None,homemean=None,homestd=None,multiout=None,rquant=None,intensestd=None,intensecorr=None,inverrf=None,T_orig=None,T_resampled=None,cc_rate=0.07):
     maxmultiplier=1.5  # who knows what the right number is to use here...
     for k in prange(nreals):
         y=int(ssty[k])
         x=int(sstx[k])
-        
+
         # deterministic or dimensionless:
         if (intensemean is not None) and (homemean is not None) and (homestd is None):
             if np.less(homemean,0.001) or np.less(intensemean[y,x],0.001):
-                multiplier=1.           # or maybe this should be zero     
+                multiplier=1.           # or maybe this should be zero
             else:
                 multiplier=np.exp(homemean-intensemean[y,x])
-                if multiplier>maxmultiplier:           
+                if multiplier>maxmultiplier:
                     multiplier=1.        # or maybe this should be zero
-                    
+
         # stochastic:
         elif (intensemean is not None) and (homemean is not None) and (homestd is not None):
             if np.less(homemean,0.001) or np.less(intensemean[y,x],0.001):
@@ -680,13 +830,18 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
                 multiplier=np.exp(muR+np.sqrt(2.*np.power(stdR,2))*inverrf[k])
                 if multiplier>maxmultiplier:
                     multiplier=1.        # or maybe this should be zero
-        
+
+        # Added by Ashar on 2026-05-20: CC temperature scaling (Clausius-Clapeyron)
+        elif (T_orig is not None) and (T_resampled is not None):
+            multiplier=np.exp(cc_rate*(T_resampled[k]-T_orig))
+
         # no rescaling:
         else:
             multiplier=1.
-            
+
         if durcheck==False:
-            rainsum[k]=np.nansum(passrain[:,y, x])
+            rainsum[k]=np.nansum(passrain[:,y, x])*multiplier
+            multiout[k]=multiplier
         else:
             storesum=0.
             storestep=0
@@ -698,7 +853,7 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
             rainsum[k]=storesum*multiplier
             multiout[k]=multiplier
             whichstep[k]=storestep
-            
+
     return rainsum,multiout,whichstep
 
 

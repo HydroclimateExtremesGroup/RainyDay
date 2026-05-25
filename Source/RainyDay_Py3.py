@@ -48,13 +48,15 @@ import matplotlib.patches as patches
 #from numba import njit, prange
 numbacheck=True
 import pandas as pd
+from scipy.stats import skewnorm
 from shapely.affinity import translate
 
 # plotting stuff, really only needed for diagnostic plots
 #matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 # import RainyDay_functions as RainyDay
-import RainyDay_utilities_Py3.RainyDay_functions as RainyDay
+# import RainyDay_utilities_Py3.RainyDay_functions as RainyDay
+from RainyDay_utilities_Py3 import RainyDay_functions as RainyDay
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -89,9 +91,9 @@ class GriddedRainProperties(object):
 #==============================================================================
     
 emptyprop=GriddedRainProperties('emptyprop',
-                            [-999.,-999.-999.-999.],
+                            [-999.,-999.,-999.,-999.],
                             [999, 999, 999, 999],
-                            [-999.,-999.-999.-999.],
+                            [-999.,-999.,-999.,-999.],
                             [999, 999],
                             [999, 999],
                             [99.,99.],
@@ -131,8 +133,8 @@ if(len(sys.argv))<=1:
     sys.exit("You didn't specify a parameter file")
     
 try:
-    #parameterfile=sys.argv[1]
-    parameterfile='/Users/daniel/Documents/RainyDay/RainyDay/Examples/BigThompson/BigThompsonExample.json'
+    parameterfile=sys.argv[1]
+    # parameterfile='/Users/daniel/Documents/RainyDay/RainyDay/Examples/BigThompson/BigThompsonExample.json'
     print("reading in the parameter file...")
     ### Cardinfo takes in the  'JSON' file parameters
     with open(parameterfile, 'r') as read_file:
@@ -193,6 +195,18 @@ else:
 #         if exc.errno != 17:   ### This checks the file exist error. '17' this is for file exist error.
 #             raise
 #         pass
+
+try:
+    tempscaling=cardinfo["tempscaling"]
+    if tempscaling.lower()=='true':
+        tempscaling=True
+    elif tempscaling.lower()=='false':
+        tempscaling=False
+    else:
+        sys.exit("tempscaling must be either 'true' or 'false'!")
+except Exception:
+    tempscaling=False
+    sys.exit("You didn't specify tempscaling, which is a required field!, defaulting to 'false'")
 try:
     nstorms=cardinfo["NSTORMS"]
     defaultstorms=False
@@ -202,7 +216,7 @@ except Exception:
     print("you didn't specify NSTORMS, defaulting to 20 per year, or whatever is in the catalog!")
     defaultstorms=True
 
-# if you are reusing a storm catalog, identify all the associated files and create a list of them:
+# if you are reusing a storm catalog, identify all the associated files and create a list of them: Added by Ashar 08142023
 if CreateCatalog==False:
     stormlist = glob.glob(fullpath+'/StormCatalog/'+catalogname + '*' + '.nc')
     stormlist = sorted(stormlist, key=lambda path: RainyDay.extract_storm_number(path, catalogname))
@@ -364,6 +378,11 @@ try:
                 sys.exit("The precipitation file specified in 'RAINDISTRIBUTIONFILE' cannot be found!")
         except IndexError:
             sys.exit("Even though you 'dimensionless SST', you didn't specify the file of precipitation distributions!")
+    # Added by Ashar on 2026-05-19: tempscaling via ENHANCEDSST card — sets both rescaletype and tempscaling flag together
+    elif rescalingtype.lower()=='tempscaling':
+        print("You selected temperature-based (CC) scaling via ENHANCEDSST. This has not been thoroughly vetted. Be careful!")
+        rescaletype = 'tempscaling'
+        tempscaling = True
     else:
         print("No rescaling will be performed!")
 except Exception:
@@ -1218,7 +1237,7 @@ if CreateCatalog:
         shutil.rmtree(fullpath + '/StormCatalog')
     os.mkdir(fullpath + '/StormCatalog')
     
-    # This part saves each storm as single file #
+    # This part saves each storm as single file #.  ### Added by Ashar to avoid memory issues when writing the catalog.  It reads in the data for each storm one at a time.
     _,readtime = RainyDay.readnetcdf(flist[0],variables,idxes,dropvars=droplist,calendar=calendar,time_units=time_units)
     print("Writing Storm Catalog!")
     for i in range(nstorms):
@@ -1286,6 +1305,8 @@ if CreateCatalog:
 
     stormlist = glob.glob(fullpath+'/StormCatalog/'+catalogname + '_storm_'+'*' + '.nc')
     stormlist = sorted(stormlist, key=lambda path: RainyDay.extract_storm_number(path, catalogname))
+
+
 #%%
 #################################################################################
 # STEP 2: RESAMPLING
@@ -1347,7 +1368,8 @@ else:
 modstormsno=origstormsno[includestorms]
 
 
-# EXCLUDE STORMS BY MONTH AND YEAR
+# EXCLUDE STORMS BY MONTH AND YEAR ## Added by Ashar on 2/6/2024. This is particularly useful for radar rainfall products, which often have artifacts in specific months or years. 
+# It can also be used to do sensitivity analysis to storms from particular months or years. This part handles single storm files.
 # THIS SECTION EXISTS IN CASE YOU WANT TO USE A PRE-EXISTING STORM CATALOG THAT HASN'T CONSIDERED ANY MONTH-BASED OR YEAR-BASED EXCLUSION
 if CreateCatalog==False:  
     if includeyears == False:
@@ -1388,7 +1410,24 @@ else:
     nstorms= len(stormlist)
 stormnumber = [RainyDay.extract_storm_number(storm, catalogname) for storm in stormlist]   ## We can use this variable somewhere.
 
+if tempscaling:   ### This is where we simulate the prestorm temperatures, which are needed for the temperature-based scaling of the storm intensities.
+    print("simulating prestorm temperatures...")
+    T_sim, P_ref, T_ref = RainyDay.simulate_prestorm_temperatures_selfcalibrated(
+        basin_rainfall = catmax,
+        cc_rate        = 0.07,
+        T_mean         = 25.80,    # <-- set this to your regional mean summer T
+        sigma          = 3.0,
+        seed           = 42,
+    )
 
+    # Added by Ashar on 2026-05-19: fit empirical CC rate from simulated T_sim and catmax
+    # Args: T_sim (1-D float array, degC) — simulated per-storm temperatures
+    #       catmax (1-D float array, mm)  — basin rainfall totals for each catalog storm
+    # Returns: cc_rate_empirical (float) — data-derived CC rate to use in SSTalt_tempscaling
+    _slope, _ = np.polyfit(T_sim, np.log(catmax.astype(float)), 1)
+    cc_rate_empirical = float(np.exp(_slope) - 1)
+    cc_rate_empirical = 0.07
+    print(f"Empirical CC scaling rate: {cc_rate_empirical*100:.2f}% per degC  (assumed: 7.00%)")
 
 #==============================================================================
 # If the storm catalog has a different duration than the specified duration, fix it!
@@ -1994,12 +2033,19 @@ if FreqAnalysis:
         whichx=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='int32')
         whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='int32')
         whichrain=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='float32')
+    elif areatype.lower()=="box" or areatype.lower()=="basin" and tempscaling==True:
+        whichx=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
+        whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')  
+        whichrain=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32')
+        whichstep=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
+        whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32') #### Added by Ashar on 2/6/2024 to support temperature scaling
+
     else:
         whichx=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
         whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')  
         whichrain=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32')
         whichstep=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
-        
+        whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32') #### Added by Ashar on 2/6/2024 to support temperature scaling
     if durcorrection:
         whichtimeind=np.zeros((whichstorms.shape),dtype='float32')
     
@@ -2023,7 +2069,7 @@ if FreqAnalysis:
         xmask=xmask[np.equal(domainmask,True)]
         ymask=ymask[np.equal(domainmask,True)]
 
-    if rescaletype=='stochastic' or rescaletype=='deterministic' or rescaletype=='dimensionless':
+    if rescaletype=='stochastic' or rescaletype=='deterministic' or rescaletype=='dimensionless' or tempscaling:
         whichmultiplier=np.empty_like(whichrain)
         whichmultiplier[:]=np.nan
 
@@ -2142,6 +2188,8 @@ if FreqAnalysis:
         catrain = np.array(catrain)
         catrain[np.less(catrain,0.)]=np.nan
         
+        ### Added by Ashar: This part is adjusted to handle storm duration correction for storm catalogs that are longer in duration than the desired analysis duration. 
+        # It finds the contiguous period of the storm with the maximum precipitation that fits within the specified duration and uses that
         if (durationcheck==False and durcorrection==False): 
             print("checking storm catalog duration, and adjusting if needed...")
             
@@ -2197,11 +2245,21 @@ if FreqAnalysis:
                 whichx[whichstorms==i,pt],whichy[whichstorms==i,pt]=RainyDay.numbakernel_fast(rndloc,cumkernel[:,:,pt],tempx,tempy,rainprop.subdimensions[1])
 
         if transpotype=='uniform' and domain_type=='irregular':
-            rndloc=np.random.randint(0,np.sum(np.equal(domainmask,True)),np.sum(whichstorms==i))
-            for pt in np.arange(0,whichx.shape[3]):
-                whichx[whichstorms==i,pt]=xmask[rndloc].reshape(len(xmask[rndloc]))
-                whichy[whichstorms==i,pt]=ymask[rndloc].reshape(len(ymask[rndloc]))
-        
+            rndloc = np.random.randint(0, np.sum(np.equal(domainmask, True)), np.sum(whichstorms==i))
+            
+            # One unique temperature per transposition realization. ### Added by Ashar on 2/6/2024 to support temperature scaling. 
+            # If you want to use the same temperature for all realizations of a given storm, 
+            # move this block outside of the loop over pt.
+            if tempscaling:
+                n_realizations = np.sum(whichstorms==i)
+                simulated_temps = skewnorm.rvs(a=0.984, loc=24.060, scale=4.278, size=n_realizations)
+            
+            for pt in np.arange(0, whichx.shape[3]):
+                whichx[whichstorms==i, pt] = xmask[rndloc].reshape(len(xmask[rndloc]))
+                whichy[whichstorms==i, pt] = ymask[rndloc].reshape(len(ymask[rndloc]))
+                if tempscaling:
+                    whichtemp[whichstorms==i, pt] = simulated_temps.reshape(len(simulated_temps))
+                
         # SET UP MANUAL PDF RESAMPLING
         elif transpotype=='manual':  
             sys.exit("not configured for manually supplied pdf yet!")
@@ -2251,8 +2309,20 @@ if FreqAnalysis:
                     temprain,whichmultiplier[whichstorms==i,pt],whichstep=RainyDay.SSTalt(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,maskheight,maskwidth,intensemean=intensemean,homemean=homemean,durcheck=durcorrection)
                     whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60./mnorm 
                 elif areatype.lower()!='pointlist' and areatype.lower()!='point' and rescaletype=='none':
-                    temprain,whichstep[whichstorms==i,pt]=RainyDay.SSTalt(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,maskheight,maskwidth,durcheck=durcorrection)                
-                    whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60./mnorm 
+                    temprain,whichstep[whichstorms==i,pt]=RainyDay.SSTalt(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,maskheight,maskwidth,durcheck=durcorrection)
+                    whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60./mnorm
+                # Added by Ashar on 2026-05-19: CC temperature scaling for area/box/basin areatype
+                elif rescaletype=='tempscaling' and areatype.lower() not in ('pointlist', 'point'):
+                    temprain, whichmultiplier[whichstorms==i, pt], whichstep[whichstorms==i, pt] = \
+                        RainyDay.SSTalt_tempscaling(
+                            passrain,
+                            whichx[whichstorms==i, pt], whichy[whichstorms==i, pt],
+                            trimmask, maskheight, maskwidth,
+                            T_orig      = T_sim[i],
+                            T_resampled = whichtemp[whichstorms==i, pt],
+                            cc_rate     = cc_rate_empirical,
+                            durcheck    = durcorrection)
+                    whichrain[whichstorms==i, pt] = temprain * rainprop.timeres / 60. / mnorm
                 elif areatype.lower()=='pointlist':
                     if rescaletype=='deterministic':
                         homemeanpt=intensemean[yind_list[pt],xind_list[pt]]
@@ -2280,10 +2350,21 @@ if FreqAnalysis:
                         intensestdpt[np.isnan(intensestdpt)]=0.
                         intensecorrpt[np.isnan(intensecorrpt)]=1.0
                         temprain,whichmultiplier[whichstorms==i,pt],_=RainyDay.SSTalt_singlecell(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,maskheight,maskwidth,intensemean=intensemeanpt,intensestd=intensestdpt,intensecorr=intensecorrpt,homemean=homemeanpt,homestd=homestdpt,durcheck=durcorrection)
+                    # Added by Ashar on 2026-05-19: CC temperature scaling for pointlist areatype
+                    elif rescaletype=='tempscaling':
+                        temprain, whichmultiplier[whichstorms==i, pt], _ = \
+                            RainyDay.SSTalt_tempscaling(
+                                passrain,
+                                whichx[whichstorms==i, pt], whichy[whichstorms==i, pt],
+                                trimmask, 1, 1,
+                                T_orig      = T_sim[i],
+                                T_resampled = whichtemp[whichstorms==i, pt],
+                                cc_rate     = cc_rate_empirical,
+                                durcheck    = durcorrection)
                     else:
                         temprain,_=RainyDay.SSTalt_singlecell(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,maskheight,maskwidth,durcheck=durcorrection)
 
-                    whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60.   
+                    whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60.
 
                    
                 elif areatype.lower()=='point':
@@ -2301,9 +2382,21 @@ if FreqAnalysis:
                         homestdpt=intensemean[ymin,xmin]
                         temprain,whichmultiplier[whichstorms==i,pt],whichstep[whichstorms==i,pt]=RainyDay.SSTalt(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,1,1,intensemean=intensemean,intensestd=intensestd,intensecorr=intensecorr,homemean=homemeanpt,homestd=homestdpt,durcheck=durcorrection)
                         whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60. 
+                    # Added by Ashar on 2026-05-20: use SSTalt_singlecell for point mode tempscaling (consistent with other point rescale types)
+                    elif rescaletype=='tempscaling':
+                        temprain, whichmultiplier[whichstorms==i, pt], whichstep[whichstorms==i, pt] = \
+                            RainyDay.SSTalt_singlecell(
+                                passrain,
+                                whichx[whichstorms==i, pt], whichy[whichstorms==i, pt],
+                                trimmask, 1, 1,
+                                durcheck    = durcorrection,
+                                T_orig      = T_sim[i],
+                                T_resampled = whichtemp[whichstorms==i, pt],
+                                cc_rate     = cc_rate_empirical)
+                        whichrain[whichstorms==i, pt] = temprain * rainprop.timeres / 60.
                     else:
                         temprain,whichstep[whichstorms==i,pt]=RainyDay.SSTalt_singlecell(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,1,1,durcheck=durcorrection)
-                        whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60. 
+                        whichrain[whichstorms==i,pt]=temprain*rainprop.timeres/60.
 
     if (durationcheck==False and durcorrection==False): 
         cattime=temptime
