@@ -1,0 +1,15 @@
+prob.exceed,returnperiod,minrain,meanrain,maxrain
+0.5,2,29,35,42
+0.2,5,36,43,52
+0.1,10,42,50,60
+0.04,25,49,60,75
+0.02,50,54,69,85
+0.01,100,59,77,98
+0.005,200,64,86,111
+0.002,500,71,99,130
+
+
+#Name: Madison, Wisconsin, USA*
+#Latitude: 43.0731°
+#Longitude: -89.3864°
+#Elevation: 274.13 m **
