@@ -54,7 +54,12 @@ from shapely.affinity import translate
 #matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 # import RainyDay_functions as RainyDay
+_RAINYDAY_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+if _RAINYDAY_SRC_DIR not in sys.path:
+    sys.path.insert(0, _RAINYDAY_SRC_DIR)
+
 import RainyDay_utilities_Py3.RainyDay_functions as RainyDay
+print("RainyDay is using functions file: " + RainyDay.__file__)
 
 import warnings
 warnings.filterwarnings("ignore")

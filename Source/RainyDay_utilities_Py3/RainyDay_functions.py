@@ -78,7 +78,7 @@ import dask
 from dask.diagnostics import ProgressBar
 from numba import njit, prange
 
-
+from scipy.signal import correlate
 from scipy.signal import fftconvolve
 from scipy.signal import oaconvolve
 
@@ -111,7 +111,8 @@ def catalogFFT_irregular(temparray, trimmask):
     trimmask_clean = np.nan_to_num(trimmask)
 
     # Cross-correlation (no flipping of mask)
-    result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
+    result = correlate(temparray_clean, trimmask_clean, mode='valid',method='auto')
+    #result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
     #result = oaconvolve(temparray_clean, trimmask_clean, mode='valid')
 
     # Find max value and its location
@@ -1923,7 +1924,14 @@ def read_quantilefile(amfile, duration, return_period, mask=True):
 
     # Calculate the quantile corresponding to the empirical probability
     empirical_quantile = 1 - 1 / return_period
-    design_values = np.quantile(precrate, empirical_quantile, axis=0, method='linear')
+    #design_values = np.quantile(precrate, empirical_quantile, axis=0, method='linear')
+    # np.quantile renamed the "interpolation" kwarg to "method" in NumPy 1.22.
+    _np_major, _np_minor = (int(x) for x in np.__version__.split('.')[:2])
+    if (_np_major, _np_minor) >= (1, 22):
+        design_values = np.quantile(precrate, empirical_quantile, axis=0, method='linear')
+    else:
+        design_values = np.quantile(precrate, empirical_quantile, axis=0, interpolation='linear')
+    
     ds.close()
     return design_values, lat, lon
 
