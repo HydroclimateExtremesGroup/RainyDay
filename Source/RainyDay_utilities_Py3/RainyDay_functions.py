@@ -78,7 +78,7 @@ import dask
 from dask.diagnostics import ProgressBar
 from numba import njit, prange
 
-
+from scipy.signal import correlate
 from scipy.signal import fftconvolve
 from scipy.signal import oaconvolve
 
@@ -111,7 +111,8 @@ def catalogFFT_irregular(temparray, trimmask):
     trimmask_clean = np.nan_to_num(trimmask)
 
     # Cross-correlation (no flipping of mask)
-    result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
+    result = correlate(temparray_clean, trimmask_clean, mode='valid',method='auto')
+    #result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
     #result = oaconvolve(temparray_clean, trimmask_clean, mode='valid')
 
     # Find max value and its location
@@ -558,7 +559,7 @@ def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,int
         else:
             if domean:
                 #sys.exit('need to fix short duration part')
-                muR=homemean-intensemean[y,x]
+                muR=homemean-intensemean[y,x]      #LY: we don't use mean, so here we need to revise and use trimmask
                 if doall:
                     stdR=np.sqrt(np.power(homestd,2)+np.power(intensestd[y,x],2)-2.*intensecorr[y,x]*homestd*intensestd[y,x])
                    # multiplier=sp.stats.lognorm.ppf(rquant[k],stdR,loc=0,scale=np.exp(muR))     
@@ -600,6 +601,187 @@ def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,int
     else:
         return rainsum,whichstep
 
+# =========================================================================================
+# added Lei 02122025: Dimensionless rescaling
+# updated Lei 04012025: extract top n storm/multiplier for writing scenarios (reduce memory)
+# =========================================================================================
+# @jit(fastmath=True)
+# def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, intensegrid=None, homegrid=None, durcheck=False):
+#     #maxmultiplier = 1.5  #LY: should we use this?
+#
+#     rainsum = np.zeros((len(sstx)), dtype='float32')
+#     whichstep = np.zeros((len(sstx)), dtype='int32')
+#     nreals = len(rainsum)
+#     nsteps = passrain.shape[0]
+#     multiout = np.full((len(sstx), maskheight, maskwidth), np.nan, dtype='float32')
+#
+#     if (intensegrid is not None) and (homegrid is not None):
+#         rescale = True
+#     else:
+#         rescale = False
+#
+#     if durcheck == False:
+#         exprain = np.expand_dims(passrain, 0)
+#     else:
+#         exprain = passrain
+#
+#     for k in range(0, nreals):
+#         y = int(ssty[k])
+#         x = int(sstx[k])
+#         if np.all(np.less(exprain[:, y:y + maskheight, x:x + maskwidth], 0.5)):
+#             rainsum[k] = 0.
+#             multiout[k] = -9999.
+#         else:
+#             if rescale:
+#                 # sys.exit('need to fix short duration part')
+#                 intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth] * trimmask
+#                 multiplier=np.exp( homegrid - intensegrid_trans )
+#                 # multiplier[multiplier > maxmultiplier] = 1.5
+#                 valid_mask = (trimmask != 0)
+#                 valid_multiplier = multiplier[valid_mask]
+#
+#                 sorted_arr = np.sort(valid_multiplier)
+#                 n = len(sorted_arr)
+#                 p10 = sorted_arr[max(0, int(0.1 * n) - 1)]
+#                 p90 = sorted_arr[min(n - 1, int(0.9 * n))]
+#
+#                 multiplier = np.clip(multiplier, p10, p90)
+#                 multiout[k, :, :] = multiplier
+#             else:
+#                 multiplier = 1.
+#
+#             if durcheck == True:
+#                 storesum = 0.
+#                 storestep = 0
+#                 for kk in range(0, nsteps):
+#                     if rescale:
+#                         tempsum = numba_multimask_calc_rescale(passrain[kk, y:y + maskheight, x:x + maskwidth], trimmask, multiplier)
+#                     else:
+#                         tempsum = numba_multimask_calc(passrain[kk, :], trimmask, y, x, maskheight, maskwidth) * multiplier
+#
+#                     if tempsum > storesum:
+#                         storesum = tempsum
+#                         storestep = kk
+#
+#                 rainsum[k] = storesum
+#                 whichstep[k] = storestep
+#             else:
+#                 if rescale:
+#                     rainsum[k] = numba_multimask_calc_rescale(passrain[y:y + maskheight, x:x + maskwidth], trimmask, multiplier)
+#                 else:
+#                     rainsum[k] = numba_multimask_calc(passrain, trimmask, y, x, maskheight, maskwidth) * multiplier
+#     if rescale:
+#         return rainsum, multiout, whichstep
+#     else:
+#         return rainsum, whichstep
+
+
+@jit(fastmath=True)
+def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top_whichrain, top_multiplier, durcheck=False, intensegrid=None, homegrid=None, Scenarios=False, storm_pos=None):
+
+    rainsum = np.zeros((len(sstx)), dtype='float32')
+    whichstep = np.zeros((len(sstx)), dtype='int32')
+    nreals = len(rainsum)
+    nsteps = passrain.shape[0]
+    multiout = np.full((len(sstx), maskheight, maskwidth), np.nan, dtype='float32')
+
+    if (intensegrid is not None) and (homegrid is not None):
+        rescale = True
+    else:
+        rescale = False
+
+    if durcheck == False:
+        exprain = np.expand_dims(passrain, 0)
+    else:
+        exprain = passrain
+
+    for k in range(nreals):
+        y = int(ssty[k])
+        x = int(sstx[k])
+
+        if np.all(np.less(exprain[:, y:y + maskheight, x:x + maskwidth], 0.5)):
+            rainsum[k] = 0.
+            multiout[k] = -9999.
+        else:
+            if rescale:
+                intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth] * trimmask
+                multiplier = np.exp(homegrid - intensegrid_trans)
+
+                # valid_mask = (trimmask != 0)
+                # valid_multiplier = multiplier[valid_mask]
+                # sorted_arr = np.sort(valid_multiplier)
+                # n = len(sorted_arr)
+                # p10 = sorted_arr[max(0, int(0.1*n)-1)]
+                # p90 = sorted_arr[min(n-1, int(0.9*n))]
+                # multiplier = np.clip(multiplier, p10, p90)
+                multiout[k, :, :] = multiplier
+            else:
+                multiplier = 1.
+
+            if durcheck == True:
+                storesum = 0.
+                storestep = 0
+                for kk in range(0, nsteps):
+                    if rescale:
+                        tempsum = numba_multimask_calc_rescale(passrain[kk, y:y + maskheight, x:x + maskwidth], trimmask, multiplier)
+                    else:
+                        tempsum = numba_multimask_calc(passrain[kk, :], trimmask, y, x, maskheight, maskwidth) * multiplier
+
+                    if tempsum > storesum:
+                        storesum = tempsum
+                        storestep = kk
+
+                rainsum[k] = storesum
+                whichstep[k] = storestep
+            else:
+                if rescale:
+                    rainsum[k] = numba_multimask_calc_rescale(passrain[y:y + maskheight, x:x + maskwidth], trimmask, multiplier)
+                else:
+                    rainsum[k] = numba_multimask_calc(passrain, trimmask, y, x, maskheight, maskwidth) * multiplier
+
+        # -----------------------------------------------------------
+        # If Scenarios==True
+        # Sort rainsum and extract the corresponding top n multiplier
+        # -----------------------------------------------------------
+        if Scenarios and (storm_pos is not None):
+            y_ = storm_pos[1][k]
+            z_ = storm_pos[2][k]
+            val = rainsum[k]
+
+            # compare and update top n storms
+            if val > top_whichrain[0, y_, z_]:
+                # update the smallest one
+                top_whichrain[0, y_, z_] = val
+                top_multiplier[0, y_, z_, :, :] = multiout[k,:,:]
+                # re-sort
+                subvals = top_whichrain[:, y_, z_].copy()
+                subidx = np.argsort(subvals)
+                sorted_vals = subvals[subidx]
+                sorted_multi = top_multiplier[subidx, y_, z_, :, :].copy()
+                top_whichrain[:, y_, z_] = sorted_vals
+                top_multiplier[:, y_, z_, :, :] = sorted_multi
+
+    return rainsum, whichstep
+
+
+# =============================================================================
+# added Lei 02122025: Calculate the rescaled rainfall
+# =============================================================================
+@jit(nopython=True, fastmath=True)
+def numba_multimask_calc_rescale(passrain, trimmask, multiplier):
+    train = passrain * multiplier * trimmask
+    rainsum = np.sum(train)
+    return rainsum
+# @jit(nopython=True, fastmath=True)
+# def numba_multimask_calc_rescale(passrain, trimmask, multiplier):
+#     total = 0.0
+#     passrain = np.ascontiguousarray(passrain.astype(np.float32))
+#     multiplier = np.ascontiguousarray(multiplier.astype(np.float32))
+#     trimmask = np.ascontiguousarray(trimmask.astype(np.float32))
+#     for i in prange(passrain.shape[0]):
+#         for j in range(passrain.shape[1]):
+#             total += passrain[i,j] * multiplier[i,j] * trimmask[i,j]
+#     return total
 
 #@jit(nopython=True,fastmath=True,parallel=True)
 @jit(nopython=True,fastmath=True)
@@ -1704,6 +1886,55 @@ def readintensityfile(rfile,inbounds=False):
     infile.close()
     return outrain,outtime,outlat,outlon
 
+# =============================================================================
+# added Lei 02122025: Read the quantile basemap for rescaling
+# =============================================================================
+def read_quantilefile(amfile, duration, return_period, mask=True):
+    """
+    Reads the amfile and calculates the design values based on the specified duration and return period using the empirical probability distribution.
+    Uses np.quantile to directly compute the quantile
+
+    Parameters:
+    amfile (str): Path to the input file
+    duration (int): Specified duration (6, 12, 24, 48, 72, 96)
+    return_period (int): Specified return period (e.g., 2, 5, 10, 25, 50, 100)
+    inbounds (tuple or bool): Optional, specifies the region boundaries (lon_min, lon_max, lat_min, lat_max)
+
+    Returns:
+    design_values (np.array): Array of design values
+    lat (np.array): Array of latitudes
+    lon (np.array): Array of longitudes
+    """
+    ds = xr.open_dataset(amfile)
+
+    # Check if the specified duration is in the dataset
+    if duration not in ds['duration'].values:
+        raise ValueError(f"The specified duration {duration} is not in the dataset. Available duration values are: {ds['duration'].values}")
+
+    ds = ds.sel(duration=duration)
+
+    # If region boundaries are specified, crop the data
+    if mask:
+        lon_min, lon_max, lat_min, lat_max = inbounds
+        ds = ds.sel(latitude=slice(lat_min, lat_max), longitude=slice(lon_min, lon_max))
+
+    precrate = ds['precrate'].values
+    lat = np.array(ds['latitude'][:])
+    lon = np.array(ds['longitude'][:])
+
+    # Calculate the quantile corresponding to the empirical probability
+    empirical_quantile = 1 - 1 / return_period
+    #design_values = np.quantile(precrate, empirical_quantile, axis=0, method='linear')
+    # np.quantile renamed the "interpolation" kwarg to "method" in NumPy 1.22.
+    _np_major, _np_minor = (int(x) for x in np.__version__.split('.')[:2])
+    if (_np_major, _np_minor) >= (1, 22):
+        design_values = np.quantile(precrate, empirical_quantile, axis=0, method='linear')
+    else:
+        design_values = np.quantile(precrate, empirical_quantile, axis=0, interpolation='linear')
+    
+    ds.close()
+    return design_values, lat, lon
+
 def readmeanfile(rfile,inbounds=False):
     infile=Dataset(rfile,'r')
     sys.exit("need to make sure that all CF-related file formatting issues are solved. This main revolves around flipping the rainfall vertically, and perhaps the latitude array as well.")
@@ -1930,10 +2161,54 @@ def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstor
     #scenario.time.encoding['units'] = "minutes since 1970-01-01 00:00:00"
     
     data.to_netcdf(name_scenariofile)
-    data.close()    
+    data.close()
 
 
+# =============================================================================
+# added LY 03132025: writing single storm scenario file using normalized SST
+# =============================================================================
+def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, name_scenariofile, tstorm, tyear, trealization, maskheight,maskwidth, subrangelat, subrangelon, scenarioname, mask):
+    transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
+    rain_nsst = transposedrain * outmultiplier
 
+    description_string = 'RainyDay storm scenario file for rescaled storm ' + str(tstorm) + ', year ' + str(tyear) + ', realization ' + str(trealization) + ', created from ' + scenarioname
+    times_units, times_calendar = 'minutes since 1970-01-01 00:00.0', 'gregorian'
+
+    # Variable Names
+    history, missing = 'Created ' + str(datetime.now()), '-9999.'
+    source = 'RainyDay storm scenario file created from ' + scenarioname + '. See description for JSON file contents.'
+
+    data = xr.Dataset(
+        {
+            "rain": (["time", "latitude", "longitude"], rain_nsst),
+            "xlocation": (["scalar_dim"], rainlocx),
+            "ylocation": (["scalar_dim"], rainlocy)
+            # "scenariotime":(["time"],raintime)
+        },
+        coords={
+            "time": raintime,
+            "latitude": subrangelat,
+            "longitude": subrangelon,
+            "scalar_dim": [0]
+        },
+        attrs = {
+            "history": history,
+            "source": source,
+            "missing": missing,
+            "description": description_string,
+            "calendar": times_calendar,
+            "times_units": times_units,
+            "latitudes_units": "degrees_north",
+            "longitudes_units": "degrees_east",
+            "rainrate_units": "mm hr^-1",
+            "rainrate_name": "precipitation rate",
+            "xlocation_name": "x index of transposition",
+            "ylocation_name": "y index of transposition"
+        }
+    )
+
+    data.to_netcdf(name_scenariofile)
+    data.close()
 
 
 #==============================================================================    
