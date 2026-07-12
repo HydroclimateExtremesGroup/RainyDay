@@ -2100,11 +2100,11 @@ def delete_files_in_directory(directory_path):
 # =============================================================================
 # added DBW 08142023: writing single storm scenario file using xarray
 # =============================================================================
-def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstorm,tyear,trealization,maskheight,maskwidth,subrangelat,subrangelon,scenarioname,mask):
+def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstorm,tyear,trealization,maskheight,maskwidth,subrangelat,subrangelon,scenarioname,mask,origstormnumber,scenario_returnperiod):
     # the following line extracts only the transposed rainfall within the area of interest
     #transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
     transposedrain=catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)]
-    
+
     description_string='RainyDay storm scenario file for original storm '+str(tstorm)+', year '+str(tyear)+', realization '+str(trealization)+', created from ' + scenarioname
     latitudes_units,longitudes_units = 'degrees_north', 'degrees_east'
     rainrate_units = 'mm hr^-1'
@@ -2123,22 +2123,36 @@ def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstor
          {
                 "rain": (["time","latitude", "longitude"], transposedrain),
                 "xlocation": (["scalar_dim"], rainlocx),
-                "ylocation": (["scalar_dim"], rainlocy)
+                "ylocation": (["scalar_dim"], rainlocy),
+                "returnperiod": (["scalar_dim"], [np.float32(scenario_returnperiod)],
+                                 {"units": "years",
+                                  "long_name": "return period of scenario",
+                                  "comment": "valid only for the single largest storm of a given year rank; -9999. for any additional NPERYEAR>1 storms sharing that same year rank"}),
+                "original_stormnumber": (["scalar_dim"], [np.int16(origstormnumber)],
+                                 {"units": "dimensionless",
+                                  "long_name": "parent storm number from storm catalog"})
                 #"scenariotime":(["time"],raintime)
             },
             coords={
-                "time": raintime,   
-                "latitude": subrangelat, 
+                "time": raintime,
+                "latitude": subrangelat,
                 "longitude": subrangelon,
                 "scalar_dim": [0]
             },
             attrs={
-            "history":history, 
-            "source" :  source, 
-            "missing" : missing, 
-            "description" : description_string,  
-            "calendar" : times_calendar    
-            }   
+            "history":history,
+            "source" :  source,
+            "missing" : missing,
+            "description" : description_string,
+            "calendar" : times_calendar,
+            "times_units": times_units,
+            "latitudes_units": latitudes_units,
+            "longitudes_units": longitudes_units,
+            "rainrate_units": rainrate_units,
+            "rainrate_name": rainrate_name,
+            "xlocation_name": xlocation_name,
+            "ylocation_name": ylocation_name
+            }
     )
     
     # # 
@@ -2167,7 +2181,7 @@ def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstor
 # =============================================================================
 # added LY 03132025: writing single storm scenario file using normalized SST
 # =============================================================================
-def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, name_scenariofile, tstorm, tyear, trealization, maskheight,maskwidth, subrangelat, subrangelon, scenarioname, mask):
+def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, name_scenariofile, tstorm, tyear, trealization, maskheight,maskwidth, subrangelat, subrangelon, scenarioname, mask, origstormnumber, scenario_returnperiod):
     transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
     rain_nsst = transposedrain * outmultiplier
 
@@ -2182,7 +2196,14 @@ def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, n
         {
             "rain": (["time", "latitude", "longitude"], rain_nsst),
             "xlocation": (["scalar_dim"], rainlocx),
-            "ylocation": (["scalar_dim"], rainlocy)
+            "ylocation": (["scalar_dim"], rainlocy),
+            "returnperiod": (["scalar_dim"], [np.float32(scenario_returnperiod)],
+                             {"units": "years",
+                              "long_name": "return period of scenario",
+                              "comment": "valid only for the single largest storm of a given year rank; -9999. for any additional NPERYEAR>1 storms sharing that same year rank"}),
+            "original_stormnumber": (["scalar_dim"], [np.int16(origstormnumber)],
+                             {"units": "dimensionless",
+                              "long_name": "parent storm number from storm catalog"})
             # "scenariotime":(["time"],raintime)
         },
         coords={
