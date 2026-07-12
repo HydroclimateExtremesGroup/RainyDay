@@ -2789,6 +2789,8 @@ if FreqAnalysis:
     #################################################################################
 
     if Scenarios:
+        # modified by Ashar 07/12/2026: added returnperiod/original_stormnumber assignment
+        # (full_returnperiod, level_indices) and RETURNLEVELS-aware scenario selection below
         print("writing spacetime precipitation scenarios...")
         # Track how many storms have been written per year
         written_per_year = {}

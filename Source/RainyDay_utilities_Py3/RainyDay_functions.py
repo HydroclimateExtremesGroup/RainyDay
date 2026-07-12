@@ -2099,6 +2099,7 @@ def delete_files_in_directory(directory_path):
 
 # =============================================================================
 # added DBW 08142023: writing single storm scenario file using xarray
+# modified by Ashar 07/12/2026: added returnperiod and original_stormnumber output variables
 # =============================================================================
 def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstorm,tyear,trealization,maskheight,maskwidth,subrangelat,subrangelon,scenarioname,mask,origstormnumber,scenario_returnperiod):
     # the following line extracts only the transposed rainfall within the area of interest
@@ -2180,6 +2181,7 @@ def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstor
 
 # =============================================================================
 # added LY 03132025: writing single storm scenario file using normalized SST
+# modified by Ashar 07/12/2026: added returnperiod and original_stormnumber output variables
 # =============================================================================
 def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, name_scenariofile, tstorm, tyear, trealization, maskheight,maskwidth, subrangelat, subrangelon, scenarioname, mask, origstormnumber, scenario_returnperiod):
     transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
