@@ -2020,7 +2020,7 @@ if FreqAnalysis:
     # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-		ws_bin  = (trimmask > 0).astype('float64')
+	    ws_bin  = (trimmask > 0).astype('float64')
         covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
         ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
 
@@ -2256,7 +2256,7 @@ if FreqAnalysis:
 
         if transpotype=='uniform' and domain_type=='irregular':
 #            rndloc=np.random.randint(0,np.sum(np.equal(domainmask,True)),np.sum(whichstorms==i))
-			rndloc=np.random.randint(0,len(xmask),np.sum(whichstorms==i))
+		    rndloc=np.random.randint(0,len(xmask),np.sum(whichstorms==i))
 
             for pt in np.arange(0,whichx.shape[3]):
                 whichx[whichstorms==i,pt]=xmask[rndloc].reshape(len(xmask[rndloc]))
