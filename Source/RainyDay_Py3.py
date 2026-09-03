@@ -2020,9 +2020,8 @@ if FreqAnalysis:
     # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-        ws_bin  = (trimmask > 0).astype('float64')
-        covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
-        ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
+        covered = RainyDay.correlate(domainmask.astype('float64'), trimmask, mode='valid', method='direct')
+        ymask, xmask = np.where(covered >= trimmask.sum() - 1e-6)
 
         #if maskheight > 1:
         #    #domainmask[:maskheight, :] = 0.    # Trim southern edge-confusing because the domain is flipped N-S for consistency with xarray
