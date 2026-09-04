@@ -2248,6 +2248,7 @@ if FreqAnalysis:
      
         # KERNEL-BASED AND INTENSITY-BASED RESAMPLING (ALSO NEEDED FOR IRREGULAR TRANSPOSITION DOMAINS)
         elif transpotype=='nonuniform':
+            sys.exit("Storm Placement fix has not been implemented for nonuniform transposition")
             rndloc=np.array(np.random.random_sample(len(whichx[whichstorms==i])),dtype='float32')
             tempx=np.empty((len(rndloc)),dtype='int32')
             tempy=np.empty((len(rndloc)),dtype='int32')
