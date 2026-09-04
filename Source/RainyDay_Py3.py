@@ -2020,16 +2020,20 @@ if FreqAnalysis:
     # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-        if maskheight > 1:
-            #domainmask[:maskheight, :] = 0.    # Trim southern edge-confusing because the domain is flipped N-S for consistency with xarray
-            domainmask[-maskheight:,:]= 0.      # Trim northern edge-confusing because the domain is flipped N-S for consistency with xarray
-        if maskwidth > 1:
-            #domainmask[:, :maskwidth] = 0.     # Trim western edge
-            domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
+        ws_bin  = (trimmask > 0).astype('float64')
+        covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
+        ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
 
-        xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
-        xmask=xmask[np.equal(domainmask,True)]
-        ymask=ymask[np.equal(domainmask,True)]
+        #if maskheight > 1:
+        #    #domainmask[:maskheight, :] = 0.    # Trim southern edge-confusing because the domain is flipped N-S for consistency with xarray
+        #    domainmask[-maskheight:,:]= 0.      # Trim northern edge-confusing because the domain is flipped N-S for consistency with xarray
+        #if maskwidth > 1:
+        #    #domainmask[:, :maskwidth] = 0.     # Trim western edge
+        #    domainmask[:, -maskwidth:] = 0.    # Trim eastern edge
+
+        #xmask,ymask=np.meshgrid(np.arange(0,domainmask.shape[1],1),np.arange(0,domainmask.shape[0],1))
+        #xmask=xmask[np.equal(domainmask,True)]
+        #ymask=ymask[np.equal(domainmask,True)]
 
     # Correcting rainprop.bndbox for the alignment of coordinates when rescaling.
     # When CreateCatalog = true, rainprop.bndbox is the same as CONUS, which causes problems for reading the quantile maps
@@ -2244,6 +2248,7 @@ if FreqAnalysis:
      
         # KERNEL-BASED AND INTENSITY-BASED RESAMPLING (ALSO NEEDED FOR IRREGULAR TRANSPOSITION DOMAINS)
         elif transpotype=='nonuniform':
+            sys.exit("Storm Placement fix has not been implemented for nonuniform transposition")
             rndloc=np.array(np.random.random_sample(len(whichx[whichstorms==i])),dtype='float32')
             tempx=np.empty((len(rndloc)),dtype='int32')
             tempy=np.empty((len(rndloc)),dtype='int32')
@@ -2251,7 +2256,9 @@ if FreqAnalysis:
                 whichx[whichstorms==i,pt],whichy[whichstorms==i,pt]=RainyDay.numbakernel_fast(rndloc,cumkernel[:,:,pt],tempx,tempy,rainprop.subdimensions[1])
 
         if transpotype=='uniform' and domain_type=='irregular':
-            rndloc=np.random.randint(0,np.sum(np.equal(domainmask,True)),np.sum(whichstorms==i))
+#            rndloc=np.random.randint(0,np.sum(np.equal(domainmask,True)),np.sum(whichstorms==i))
+            rndloc=np.random.randint(0,len(xmask),np.sum(whichstorms==i))
+
             for pt in np.arange(0,whichx.shape[3]):
                 whichx[whichstorms==i,pt]=xmask[rndloc].reshape(len(xmask[rndloc]))
                 whichy[whichstorms==i,pt]=ymask[rndloc].reshape(len(ymask[rndloc]))
