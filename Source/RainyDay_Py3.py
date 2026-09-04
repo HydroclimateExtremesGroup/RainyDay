@@ -2796,6 +2796,8 @@ if FreqAnalysis:
     #################################################################################
 
     if Scenarios:
+        # modified by Ashar 07/12/2026: added returnperiod/original_stormnumber assignment
+        # (full_returnperiod, level_indices) and RETURNLEVELS-aware scenario selection below
         print("writing spacetime precipitation scenarios...")
         # Track how many storms have been written per year
         written_per_year = {}
@@ -2805,7 +2807,25 @@ if FreqAnalysis:
         
         subrangelat=np.array(latrange[ymin:ymax+1])
         subrangelon=np.array(lonrange[xmin:xmax+1])
-        minind=RainyDay.find_nearest(returnperiod,RainfallThreshYear)
+        # Full-length return period array (length nsimulations), rebuilt from the same
+        # formula used in the frequency analysis (returnperiod=1/exceedp). This is used for
+        # per-scenario return periods so the result is correct whether alllevels is True
+        # (returnperiod untouched) or False (module-level returnperiod was reduced at the
+        # alllevels==False branch above).
+        full_returnperiod=1.0/np.linspace(1,1./nsimulations,nsimulations)
+        minind=RainyDay.find_nearest(full_returnperiod,RainfallThreshYear)
+
+        # Which ranks (along the sorted-years axis) get written as scenario files.
+        # alllevels==True (RETURNLEVELS "all"): every rank at/above RETURNTHRESHOLD, as before.
+        # alllevels==False (RETURNLEVELS an explicit list, e.g. [2,5,10,25,50,100]): only the
+        # ranks nearest each requested level, matching the same reduction used for the
+        # FreqAnalysis CSV/plot (RainyDay.find_nearest against full_returnperiod).
+        if alllevels:
+            level_indices=np.arange(minind,nsimulations)
+        else:
+            level_indices=np.array(sorted(set(
+                RainyDay.find_nearest(full_returnperiod,lvl) for lvl in speclevels
+            )),dtype='int64')
         
         # sortind=np.argsort(whichrain[:,:,:,0],axis=0)
         # whichrain=np.take_along_axis(np.squeeze(whichrain),sortind,axis=0)
@@ -2858,9 +2878,9 @@ if FreqAnalysis:
 
 
 
-        whichstorms=whichstorms[-nperyear:,minind:,:]
-        writex=whichx[-nperyear:,minind:,:]
-        writey=whichy[-nperyear:,minind:,:]
+        whichstorms=whichstorms[-nperyear:,level_indices,:]
+        writex=whichx[-nperyear:,level_indices,:]
+        writey=whichy[-nperyear:,level_indices,:]
         
         writemask=trimmask
         writemask[np.greater(trimmask,0.)]=1.   # we don't want fractional masks here
@@ -2874,7 +2894,7 @@ if FreqAnalysis:
             print("You are rescaling the rainfall scenarios\nranking rescaling factors for writing scenarios...")
 
             whichmultiplier_sorted_second = np.take_along_axis(top_multiplier,sortind_second_axis[np.newaxis, :, :, np.newaxis, np.newaxis], axis=1)
-            writemultiplier = whichmultiplier_sorted_second[:, minind:, :, :, :]
+            writemultiplier = whichmultiplier_sorted_second[:, level_indices, :, :, :]
 
         for i in np.arange(0,nstorms):
             print("writing scenarios for storm "+str(i+1))
@@ -2898,16 +2918,34 @@ if FreqAnalysis:
                     tstorm,tyear,trealization=np.where(stormindex==k)    ####tstorm is not the original storm number here but "i" is.
                     outx=writex[stormindex==k]
                     outy=writey[stormindex==k]
-                    
+
+                    # Original (parent) storm number: the real catalog storm ID this scenario
+                    # was transposed from. stormnumber is index-aligned with stormlist, so it
+                    # respects EXCLUDESTORMS and 1-based filenames.
+                    origstormnumber=stormnumber[i]
+                    # Return period of THIS scenario. tyear[0] is a position along the
+                    # (possibly level-reduced) years axis; level_indices maps it back to the
+                    # absolute rank in the full-length return period array. Return period is a
+                    # property of the YEAR-RANK, not of an individual storm, so when NPERYEAR>1
+                    # only the single largest storm of that year (axis 0 is sorted ascending, so
+                    # tstorm[0]==nperyear-1 is the last/largest slot) gets the real value; any
+                    # additional storms from the same year would otherwise misleadingly share
+                    # that same return period despite being smaller/different storms, so they
+                    # get the file's missing-value sentinel (-9999.) instead.
+                    if tstorm[0]==nperyear-1:
+                        scenario_returnperiod=full_returnperiod[level_indices[tyear[0]]]
+                    else:
+                        scenario_returnperiod=-9999.
+
                     name_scenariofile=fullpath+'/Realizations/realization'+str(trealization[0]+1)+'/scenario_'+scenarioname+'_rlz'+str(trealization[0]+1)+'year'+str(tyear[0]+1)+'storm'+str(tstorm[0]+1)+'.nc'
                     #outrain=RainyDay.SSTspin_write_v2(catrain,np.squeeze(writex[:,rlz]),np.squeeze(writey[:,rlz]),np.squeeze(writestorm[:,rlz]),nanmask,maskheight,maskwidth,precat,cattime[:,-1],rainprop,spin=prependrain,flexspin=False,samptype=transpotype,cumkernel=cumkernel,rotation=rotation,domaintype=domain_type)
                     if rescaletype == 'dimensionless':
                         outmultiplier = writemultiplier[stormindex == k]
                         RainyDay.Normalized_SST_write(catrain, raintime, outx, outy, outmultiplier, name_scenariofile, i, tyear[0],
                                                    trealization[0], maskheight, maskwidth, subrangelat, subrangelon,
-                                                   scenarioname, writemask)
+                                                   scenarioname, writemask, origstormnumber, scenario_returnperiod)
                     else:
-                        RainyDay.writescenariofile(catrain,raintime,outx,outy,name_scenariofile,i,tyear[0],trealization[0],maskheight,maskwidth,subrangelat,subrangelon,scenarioname,writemask)
+                        RainyDay.writescenariofile(catrain,raintime,outx,outy,name_scenariofile,i,tyear[0],trealization[0],maskheight,maskwidth,subrangelat,subrangelon,scenarioname,writemask,origstormnumber,scenario_returnperiod)
 
     #testrain=np.nansum(np.multiply(catrain[:,21 : 21+maskheight, 29 : 29+maskwidth],trimmask),axis=(1,2))/mnorm
     
