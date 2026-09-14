@@ -1304,7 +1304,9 @@ def creategrids(rainprop):
 #==============================================================================
 # FUNCTION TO CREATE A MASK ACCORDING TO A USER-DEFINED POLYGON SHAPEFILE AND PROJECTION
 #==============================================================================
-def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False):            
+
+# edited 9/14/2026 by BLF... have repurposed code from SLAM to remove NAN precip from shapefile masks. 
+def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False,precipfile=None,variables=None):            
     bndcoords=np.array(rainprop.subextent)
     
     xdim=rainprop.subdimensions[0]  
@@ -1328,7 +1330,7 @@ def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False):
         #    else:
         #        shapes.append(shape(feature["geometry"]))
             
-        
+    #figure out how to make 0's for Nan is precip
     
     if masktype=='simple':
         print('creating simple mask (0s and 1s)')
@@ -1370,6 +1372,22 @@ def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False):
     else:
         sys.exit("You entered an incorrect mask type, options are 'simple' or 'fraction'")
     #delete('temp9999.tif')   
+
+    # Zero out basin cells where the input precip data is invalid 
+    if precipfile is not None and variables is not None:
+        var_name,lat_name,lon_name = variables.values()
+        ds = xr.open_dataset(precipfile)
+        if max(ds[lon_name].values) > 180:
+            ds[lon_name] = ds[lon_name] - 360
+        precip = ds[var_name].sel(**{lat_name:slice(rainprop.subextent[2],rainprop.subextent[3])},
+                                   **{lon_name:slice(rainprop.subextent[0],rainprop.subextent[1])}).values
+        ds.close()
+        valid = np.all((precip >= 0.) & np.isfinite(precip), axis=0)
+        valid = np.flipud(valid)    # data is south-up; this mask is north-up until the caller flips it
+        if valid.shape != rastertemplate.shape:
+            sys.exit("rastermask: precip validity grid and mask are different sizes")
+        rastertemplate = np.where(valid, rastertemplate, 0.)
+
     return rastertemplate   
 
 

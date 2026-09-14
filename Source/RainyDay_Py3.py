@@ -971,7 +971,8 @@ if CreateCatalog:
         if os.path.isfile(wsmaskshp)==False:
             sys.exit("can't find the basin shapefile!")
         else:
-            catmask=RainyDay.rastermask(wsmaskshp,rainprop,'fraction')
+            # BLF 091426- altered so that first precipitation file is used to create mask
+            catmask=RainyDay.rastermask(wsmaskshp,rainprop,'fraction',precipfile=flist[0],variables=variables)
     
             # DBW 08072023-this is to ensure consistency in orientation with precipitation fields from xarray:
             catmask=np.flipud(catmask)
@@ -1073,7 +1074,8 @@ halfwidth=np.int32(np.ceil(maskwidth/2))
 
 if CreateCatalog:
     if domain_type.lower()=='irregular' and shpdom and CreateCatalog:
-        domainmask=RainyDay.rastermask(domainshp,rainprop,'simple').astype('float32')
+        # BLF 091426- altered so that first precipitation file is used to create mask
+        domainmask=RainyDay.rastermask(domainshp,rainprop,'simple',precipfile=flist[0],variables=variables).astype('float32')
         # DBW 08072023-this is to ensure consistency in orientation with precipitation fields from xarray:
         domainmask=np.flipud(domainmask)
 
