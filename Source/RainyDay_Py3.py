@@ -1032,16 +1032,21 @@ if CreateCatalog:
 
        
 # TRIM THE GRID DOWN TO GET THE RECTANGLE THAT BOUNDS THE NONZERO VALUES IN CATMASK. THIS IS NEEDED FOR IDENTIFYING EXTREME STORMS WITH RESPECT TO THAT SCALE
-csum=np.where(np.sum(catmask,axis=0)==0)
-rsum=np.where(np.sum(catmask,axis=1)==0)
+# BLF 9152026: A domain could contain interior invalid pieces so we cant just delete the rows and columns that have all zeros. 
+#csum=np.where(np.sum(catmask,axis=0)==0)
+#rsum=np.where(np.sum(catmask,axis=1)==0)
 
 xmin=np.min(np.where(np.sum(catmask,axis=0)!=0))
 xmax=np.max(np.where(np.sum(catmask,axis=0)!=0))
 ymin=np.min(np.where(np.sum(catmask,axis=1)!=0))
 ymax=np.max(np.where(np.sum(catmask,axis=1)!=0))
 
-trimmask=np.delete(catmask,csum,axis=1)
-trimmask=np.delete(trimmask,rsum,axis=0)
+# BLF 09152026: This is the new way to trim the mask. It will keep the interior invalid pieces, but will trim off the exterior zeros.
+#trimmask=np.delete(catmask,csum,axis=1)
+#trimmask=np.delete(trimmask,rsum,axis=0)
+trimmask=catmask[ymin:ymax+1, xmin:xmax+1]
+
+
 maskwidth=trimmask.shape[1]
 maskheight=trimmask.shape[0]
 trimmask=np.array(trimmask,dtype='float32')
