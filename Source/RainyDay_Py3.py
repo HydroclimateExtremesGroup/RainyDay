@@ -1093,6 +1093,11 @@ if catmask.shape!=domainmask.shape:
 if np.any(np.logical_and(np.equal(catmask,1.),np.equal(domainmask,0.))):
     sys.exit("it looks as if the location specified in 'POINTAREA' is outside of the transposition domain!")
 
+# BLF 09152026: Create domain bounding box shaped array with True where anchor of transposition is fully in domain shape (used for catalog creation). 
+ws_bin = (trimmask > 0).astype('float64')
+covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
+valid_anchor = covered >= ws_bin.sum() - 1e-6
+
 # exclude points that are outside of the transposition domain:
 if areatype=="pointlist" and domain_type=='irregular':
     keeppoints=np.ones_like(yind_list,dtype='bool')
@@ -1180,7 +1185,7 @@ if CreateCatalog:
             temparray=np.squeeze(np.nansum(rainarray[subtimeind,:],axis=1))
             
 
-            rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask)
+            rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask, valid_anchor)
 
             minind=np.argmin(catmax)
             tempmin=catmax[minind]
@@ -2022,9 +2027,12 @@ if FreqAnalysis:
     # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-        ws_bin  = (trimmask > 0).astype('float64')
-        covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
-        ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
+        # Originally edited by BLF 09072026 to include check for valid placements
+        # Re-edited by BLF 09152026 to use valid_anchor calculated above. 
+        #ws_bin  = (trimmask > 0).astype('float64')
+        #covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
+        #ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
+        ymask, xmask = np.where(valid_anchor)
 
         #if maskheight > 1:
         #    #domainmask[:maskheight, :] = 0.    # Trim southern edge-confusing because the domain is flipped N-S for consistency with xarray
@@ -2229,7 +2237,7 @@ if FreqAnalysis:
                 maxpass=np.nansum(catrain[j:j+int(duration*60./rainprop.timeres),:],axis=0)
                 
 
-                maxtemp,tempy,tempx=RainyDay.catalogFFT_irregular(temparray,trimmask)
+                maxtemp,tempy,tempx=RainyDay.catalogFFT_irregular(temparray,trimmask, valid_anchor)
      
                 if maxtemp>dur_max:
                     dur_max=maxtemp

@@ -85,10 +85,11 @@ from scipy.signal import oaconvolve
 
 
 # =============================================================================
-# FFT-based catalog creator from Gabriel Perez, added by DBW 10 July 2025
+# FFT-based catalog creator from Gabriel Perez, added by DBW 10 July 2025, edited by BLF 15 September 2026
+# Edits added restriction that storms footprint must fully be in domain (mirrors storm placement changes)
 # =============================================================================
 
-def catalogFFT_irregular(temparray, trimmask):
+def catalogFFT_irregular(temparray, trimmask, valid_anchor):
     """
     CPU version using FFT-based convolution (cross-correlation equivalent to manual loop).
 
@@ -98,6 +99,8 @@ def catalogFFT_irregular(temparray, trimmask):
         2D rainfall field (float32 or float64)
     trimmask : np.ndarray
         2D storm mask kernel (float32 or float64)
+    valid_anchor : np.ndarray (bool)
+        Array where true when the whole watershed footprint fits in domain.
 
     Returns:
     --------
@@ -109,16 +112,21 @@ def catalogFFT_irregular(temparray, trimmask):
     # Clean NaNs
     temparray_clean = np.nan_to_num(temparray)
     trimmask_clean = np.nan_to_num(trimmask)
+    if not valid_anchor.any():
+        sys.exit("Watershed fits nowhere inside the domain")
 
     # Cross-correlation (no flipping of mask)
     result = correlate(temparray_clean, trimmask_clean, mode='valid',method='auto')
     #result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
     #result = oaconvolve(temparray_clean, trimmask_clean, mode='valid')
+    
+    # Mask out invalid anchor points (where the watershed footprint does not fit)
+    result = np.where(valid_anchor, result, -np.inf)
 
     # Find max value and its location
     rmax = np.max(result)
     ymax, xmax = np.unravel_index(np.argmax(result), result.shape)
-
+    
     return float(rmax), int(ymax), int(xmax)
 
 
