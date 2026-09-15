@@ -2176,7 +2176,10 @@ if FreqAnalysis:
             y_min, x_min = np.argwhere(catmask != 0).min(axis=0)
             y_max, x_max = np.argwhere(catmask != 0).max(axis=0)
 
-            homegrid = np.multiply(intensegrid[y_min:y_max + 1, x_min:x_max + 1], trimmask)
+            # BLF 9/15/2026 I don't think we want to multiply by the trimmask here b/c we already took the log. 
+            # If we remove from the transposition location as well, and only do with Rain Sum should work fine. 
+            #homegrid = np.multiply(intensegrid[y_min:y_max + 1, x_min:x_max + 1], trimmask)
+            homegrid = intensegrid[y_min:y_max + 1, x_min:x_max + 1]
 
 
 
