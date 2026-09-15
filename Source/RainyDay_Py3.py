@@ -2173,6 +2173,12 @@ if FreqAnalysis:
             intenselat = intenselat[int_ymin:int_ymax+1]
             intenselon = intenselon[int_xmin:int_xmax+1]
 
+            # BLF 09152026: the +1 padding above makes intensegrid one row/column larger than the storm-catalog grid, so crop to match
+            intenselat = intenselat[:domainmask.shape[0]]
+            intenselon = intenselon[:domainmask.shape[1]]
+            if not (np.allclose(intenselat, np.asarray(latrange)) and np.allclose(intenselon, np.asarray(lonrange))):
+                sys.exit("The design field grid does not align with the storm catalog grid")
+
             y_min, x_min = np.argwhere(catmask != 0).min(axis=0)
             y_max, x_max = np.argwhere(catmask != 0).max(axis=0)
 
