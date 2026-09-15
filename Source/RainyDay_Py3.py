@@ -1504,15 +1504,10 @@ if domain_type=='rectangular':
     invalues=np.vstack([caty[checkind], catx[checkind]])
 else:
     invalues=np.vstack([caty, catx])
+    
 
-# BLF 9152026- Add this error for case when domain=basin     
-try:
-    stmkernel=stats.gaussian_kde(invalues,bw_method=RainyDay.my_kde_bandwidth)
-    pltkernel=np.multiply(np.reshape(stmkernel(kpositions), kx.shape),domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
-except: 
-    print("WARNING: could not fit a kernel density to the catalog storm locations; using a uniform transposition kernel")
-    pltkernel=np.array(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1],dtype='float64')
-
+stmkernel=stats.gaussian_kde(invalues,bw_method=RainyDay.my_kde_bandwidth)
+pltkernel=np.multiply(np.reshape(stmkernel(kpositions), kx.shape),domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
 pltkernel=pltkernel/np.nansum(pltkernel)
 tempmask=deepcopy(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
 
