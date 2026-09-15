@@ -2187,6 +2187,7 @@ if FreqAnalysis:
             intenselon = intenselon[int_xmin:int_xmax+1]
 
             # BLF 09152026: the +1 padding above makes intensegrid one row/column larger than the storm-catalog grid, so crop to match
+            intensegrid = intensegrid[:domainmask.shape[0], :domainmask.shape[1]]
             intenselat = intenselat[:domainmask.shape[0]]
             intenselon = intenselon[:domainmask.shape[1]]
             if not (np.allclose(intenselat, np.asarray(latrange)) and np.allclose(intenselon, np.asarray(lonrange))):
