@@ -712,10 +712,13 @@ def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top
             multiout[k] = -9999.
         else:
             if rescale:
-                # BLF 9152026: Since intensegrid is log transfomed, we don't want to multiply by trimmask weightings. 
+                # BLF 9152026: Since intensegrid is log transfomed, we don't want to multiply by trimmask weightings.
                 #intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth] * trimmask
                 intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth]
                 multiplier = np.exp(homegrid - intensegrid_trans)
+                # BLF 9152026: If we have an infinite multiplier have it be 0. 
+                multiplier = np.where(np.isfinite(multiplier), multiplier, 0.0)
+
 
                 # valid_mask = (trimmask != 0)
                 # valid_multiplier = multiplier[valid_mask]

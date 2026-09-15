@@ -2177,10 +2177,11 @@ if FreqAnalysis:
             y_max, x_max = np.argwhere(catmask != 0).max(axis=0)
 
             # BLF 9/15/2026 I don't think we want to multiply by the trimmask here b/c we already took the log. 
-            # If we remove from the transposition location as well, and only do with Rain Sum should work fine. 
+            # If we remove from the transposition location as well, and only do with Rain Sum should work fine. Also added check that domain has full design field. 
             #homegrid = np.multiply(intensegrid[y_min:y_max + 1, x_min:x_max + 1], trimmask)
             homegrid = intensegrid[y_min:y_max + 1, x_min:x_max + 1]
-
+            if np.any(~np.isfinite(intensegrid[domainmask > 0])):
+                sys.exit("Design field is missing inside the transposition domaian")
 
 
         elif '.asc' in rescalingfile:
