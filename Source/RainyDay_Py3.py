@@ -1510,9 +1510,17 @@ if domain_type=='rectangular':
 else:
     invalues=np.vstack([caty, catx])
     
+# BLF 09152026: gaussian_kde error when domain (is small) has a very limited catalog storm positions. 
+# Only would matter with non-uniform but we always calc do the kernels for some reason. If this error occurs will just proceed with uniform transposition. 
 
-stmkernel=stats.gaussian_kde(invalues,bw_method=RainyDay.my_kde_bandwidth)
-pltkernel=np.multiply(np.reshape(stmkernel(kpositions), kx.shape),domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
+try:
+    stmkernel=stats.gaussian_kde(invalues,bw_method=RainyDay.my_kde_bandwidth)
+    pltkernel=np.multiply(np.reshape(stmkernel(kpositions), kx.shape),domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
+except:
+    print("Could not run Gaussian KDE so using uniform transposition")
+    pltkernel=np.array(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1],dtype='float64')
+
+
 pltkernel=pltkernel/np.nansum(pltkernel)
 tempmask=deepcopy(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
 
