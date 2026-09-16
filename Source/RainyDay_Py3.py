@@ -1183,14 +1183,19 @@ if CreateCatalog:
             raintime[-1]=intime[k]
             # stt = time.time()
             rainarray[-1,:]=inrain[k,:]
+            
+
             # ett = time.time();print(ett-stt)
             #rainarray[-1,:]=np.reshape(inrain[k,:],(rainprop.subdimensions[0],rainprop.subdimensions[1]))
             subtimeind=np.where(np.logical_and(raintime>starttime,raintime<=raintime[-1]))
             subtime=np.arange(raintime[-1],starttime,-timestep)[::-1]
             temparray=np.squeeze(np.nansum(rainarray[subtimeind,:],axis=1))
-            
-
-            rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask, valid_anchor)
+            # BLF 9/16/2026- I encountered an error where hour 71 and 72 would have same total precip (not raining in hour 72). Catalog function chooses the first
+            # and error occurs because list of hours is shorter than should be at next step of code. Fix is to skip check if time is less than 72 (or whatever duration s. )
+            if raintime[0]==np.datetime64(datetime(1700,1,1,0,0,0)):
+                rainmax=0.
+            else:            
+                rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask, valid_anchor)
 
             minind=np.argmin(catmax)
             tempmin=catmax[minind]
