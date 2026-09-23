@@ -85,10 +85,11 @@ from scipy.signal import oaconvolve
 
 
 # =============================================================================
-# FFT-based catalog creator from Gabriel Perez, added by DBW 10 July 2025
+# FFT-based catalog creator from Gabriel Perez, added by DBW 10 July 2025, edited by BLF 15 September 2026
+# Edits added restriction that storms footprint must fully be in domain (mirrors storm placement changes)
 # =============================================================================
 
-def catalogFFT_irregular(temparray, trimmask):
+def catalogFFT_irregular(temparray, trimmask, valid_anchor):
     """
     CPU version using FFT-based convolution (cross-correlation equivalent to manual loop).
 
@@ -98,6 +99,8 @@ def catalogFFT_irregular(temparray, trimmask):
         2D rainfall field (float32 or float64)
     trimmask : np.ndarray
         2D storm mask kernel (float32 or float64)
+    valid_anchor : np.ndarray (bool)
+        Array where true when the whole watershed footprint fits in domain.
 
     Returns:
     --------
@@ -109,16 +112,21 @@ def catalogFFT_irregular(temparray, trimmask):
     # Clean NaNs
     temparray_clean = np.nan_to_num(temparray)
     trimmask_clean = np.nan_to_num(trimmask)
+    if not valid_anchor.any():
+        sys.exit("Watershed fits nowhere inside the domain")
 
     # Cross-correlation (no flipping of mask)
     result = correlate(temparray_clean, trimmask_clean, mode='valid',method='auto')
     #result = fftconvolve(temparray_clean, trimmask_clean, mode='valid')
     #result = oaconvolve(temparray_clean, trimmask_clean, mode='valid')
+    
+    # Mask out invalid anchor points (where the watershed footprint does not fit)
+    result = np.where(valid_anchor, result, -np.inf)
 
     # Find max value and its location
     rmax = np.max(result)
     ymax, xmax = np.unravel_index(np.argmax(result), result.shape)
-
+    
     return float(rmax), int(ymax), int(xmax)
 
 
@@ -704,8 +712,13 @@ def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top
             multiout[k] = -9999.
         else:
             if rescale:
-                intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth] * trimmask
+                # BLF 9152026: Since intensegrid is log transfomed, we don't want to multiply by trimmask weightings.
+                #intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth] * trimmask
+                intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth]
                 multiplier = np.exp(homegrid - intensegrid_trans)
+                # BLF 9152026: If we have an infinite multiplier have it be 0. 
+                multiplier = np.where(np.isfinite(multiplier), multiplier, 0.0)
+
 
                 # valid_mask = (trimmask != 0)
                 # valid_multiplier = multiplier[valid_mask]
@@ -1304,7 +1317,9 @@ def creategrids(rainprop):
 #==============================================================================
 # FUNCTION TO CREATE A MASK ACCORDING TO A USER-DEFINED POLYGON SHAPEFILE AND PROJECTION
 #==============================================================================
-def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False):            
+
+# edited 9/14/2026 by BLF... have repurposed code from SLAM to remove NAN precip from shapefile masks. 
+def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False,precipfile=None,variables=None):            
     bndcoords=np.array(rainprop.subextent)
     
     xdim=rainprop.subdimensions[0]  
@@ -1328,7 +1343,7 @@ def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False):
         #    else:
         #        shapes.append(shape(feature["geometry"]))
             
-        
+    #figure out how to make 0's for Nan is precip
     
     if masktype=='simple':
         print('creating simple mask (0s and 1s)')
@@ -1370,6 +1385,22 @@ def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False):
     else:
         sys.exit("You entered an incorrect mask type, options are 'simple' or 'fraction'")
     #delete('temp9999.tif')   
+
+    # Zero out basin cells where the input precip data is invalid 
+    if precipfile is not None and variables is not None:
+        var_name,lat_name,lon_name = variables.values()
+        ds = xr.open_dataset(precipfile)
+        if max(ds[lon_name].values) > 180:
+            ds[lon_name] = ds[lon_name] - 360
+        precip = ds[var_name].sel(**{lat_name:slice(rainprop.subextent[2],rainprop.subextent[3])},
+                                   **{lon_name:slice(rainprop.subextent[0],rainprop.subextent[1])}).values
+        ds.close()
+        valid = np.all((precip >= 0.) & np.isfinite(precip), axis=0)
+        valid = np.flipud(valid)    # data is south-up; this mask is north-up until the caller flips it
+        if valid.shape != rastertemplate.shape:
+            sys.exit("rastermask: precip validity grid and mask are different sizes")
+        rastertemplate = np.where(valid, rastertemplate, 0.)
+
     return rastertemplate   
 
 

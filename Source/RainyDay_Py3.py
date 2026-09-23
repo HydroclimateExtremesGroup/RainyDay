@@ -971,7 +971,8 @@ if CreateCatalog:
         if os.path.isfile(wsmaskshp)==False:
             sys.exit("can't find the basin shapefile!")
         else:
-            catmask=RainyDay.rastermask(wsmaskshp,rainprop,'fraction')
+            # BLF 091426- altered so that first precipitation file is used to create mask
+            catmask=RainyDay.rastermask(wsmaskshp,rainprop,'fraction',precipfile=flist[0],variables=variables)
     
             # DBW 08072023-this is to ensure consistency in orientation with precipitation fields from xarray:
             catmask=np.flipud(catmask)
@@ -1031,16 +1032,21 @@ if CreateCatalog:
 
        
 # TRIM THE GRID DOWN TO GET THE RECTANGLE THAT BOUNDS THE NONZERO VALUES IN CATMASK. THIS IS NEEDED FOR IDENTIFYING EXTREME STORMS WITH RESPECT TO THAT SCALE
-csum=np.where(np.sum(catmask,axis=0)==0)
-rsum=np.where(np.sum(catmask,axis=1)==0)
+# BLF 9152026: A domain could contain interior invalid pieces so we cant just delete the rows and columns that have all zeros. 
+#csum=np.where(np.sum(catmask,axis=0)==0)
+#rsum=np.where(np.sum(catmask,axis=1)==0)
 
 xmin=np.min(np.where(np.sum(catmask,axis=0)!=0))
 xmax=np.max(np.where(np.sum(catmask,axis=0)!=0))
 ymin=np.min(np.where(np.sum(catmask,axis=1)!=0))
 ymax=np.max(np.where(np.sum(catmask,axis=1)!=0))
 
-trimmask=np.delete(catmask,csum,axis=1)
-trimmask=np.delete(trimmask,rsum,axis=0)
+# BLF 09152026: This is the new way to trim the mask. It will keep the interior invalid pieces, but will trim off the exterior zeros.
+#trimmask=np.delete(catmask,csum,axis=1)
+#trimmask=np.delete(trimmask,rsum,axis=0)
+trimmask=catmask[ymin:ymax+1, xmin:xmax+1]
+
+
 maskwidth=trimmask.shape[1]
 maskheight=trimmask.shape[0]
 trimmask=np.array(trimmask,dtype='float32')
@@ -1073,7 +1079,8 @@ halfwidth=np.int32(np.ceil(maskwidth/2))
 
 if CreateCatalog:
     if domain_type.lower()=='irregular' and shpdom and CreateCatalog:
-        domainmask=RainyDay.rastermask(domainshp,rainprop,'simple').astype('float32')
+        # BLF 091426- altered so that first precipitation file is used to create mask
+        domainmask=RainyDay.rastermask(domainshp,rainprop,'simple',precipfile=flist[0],variables=variables).astype('float32')
         # DBW 08072023-this is to ensure consistency in orientation with precipitation fields from xarray:
         domainmask=np.flipud(domainmask)
 
@@ -1090,6 +1097,11 @@ if catmask.shape!=domainmask.shape:
 # DBW 08082023: this checks to see if any of catmask is outside of the domainmask. That would be bad. This didn't work before, but now it should   
 if np.any(np.logical_and(np.equal(catmask,1.),np.equal(domainmask,0.))):
     sys.exit("it looks as if the location specified in 'POINTAREA' is outside of the transposition domain!")
+
+# BLF 09152026: Create domain bounding box shaped array with True where anchor of transposition is fully in domain shape (used for catalog creation). 
+ws_bin = (trimmask > 0).astype('float64')
+covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
+valid_anchor = covered >= ws_bin.sum() - 1e-6
 
 # exclude points that are outside of the transposition domain:
 if areatype=="pointlist" and domain_type=='irregular':
@@ -1171,14 +1183,19 @@ if CreateCatalog:
             raintime[-1]=intime[k]
             # stt = time.time()
             rainarray[-1,:]=inrain[k,:]
+            
+
             # ett = time.time();print(ett-stt)
             #rainarray[-1,:]=np.reshape(inrain[k,:],(rainprop.subdimensions[0],rainprop.subdimensions[1]))
             subtimeind=np.where(np.logical_and(raintime>starttime,raintime<=raintime[-1]))
             subtime=np.arange(raintime[-1],starttime,-timestep)[::-1]
             temparray=np.squeeze(np.nansum(rainarray[subtimeind,:],axis=1))
-            
-
-            rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask)
+            # BLF 9/16/2026- I encountered an error where hour 71 and 72 would have same total precip (not raining in hour 72). Catalog function chooses the first
+            # and error occurs because list of hours is shorter than should be at next step of code. Fix is to skip check if time is less than 72 (or whatever duration s. )
+            if raintime[0]==np.datetime64(datetime(1700,1,1,0,0,0)):
+                rainmax=0.
+            else:            
+                rainmax,ycat,xcat=RainyDay.catalogFFT_irregular(temparray,trimmask, valid_anchor)
 
             minind=np.argmin(catmax)
             tempmin=catmax[minind]
@@ -1498,9 +1515,17 @@ if domain_type=='rectangular':
 else:
     invalues=np.vstack([caty, catx])
     
+# BLF 09152026: gaussian_kde error when domain (is small) has a very limited catalog storm positions. 
+# Only would matter with non-uniform but we always calc do the kernels for some reason. If this error occurs will just proceed with uniform transposition. 
 
-stmkernel=stats.gaussian_kde(invalues,bw_method=RainyDay.my_kde_bandwidth)
-pltkernel=np.multiply(np.reshape(stmkernel(kpositions), kx.shape),domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
+try:
+    stmkernel=stats.gaussian_kde(invalues,bw_method=RainyDay.my_kde_bandwidth)
+    pltkernel=np.multiply(np.reshape(stmkernel(kpositions), kx.shape),domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
+except:
+    print("Could not run Gaussian KDE so using uniform transposition")
+    pltkernel=np.array(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1],dtype='float64')
+
+
 pltkernel=pltkernel/np.nansum(pltkernel)
 tempmask=deepcopy(domainmask[0:rainprop.subdimensions[0]-maskheight+1,0:rainprop.subdimensions[1]-maskwidth+1])
 
@@ -2020,9 +2045,12 @@ if FreqAnalysis:
     # This avoids placing storm centers too close to the edges where the mask footprint (e.g., 5x5)
     # would exceed the domain and cause indexing issues or partial storms.
     if transpotype=='uniform' and domain_type=='irregular':
-        ws_bin  = (trimmask > 0).astype('float64')
-        covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
-        ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
+        # Originally edited by BLF 09072026 to include check for valid placements
+        # Re-edited by BLF 09152026 to use valid_anchor calculated above. 
+        #ws_bin  = (trimmask > 0).astype('float64')
+        #covered = RainyDay.correlate(domainmask.astype('float64'), ws_bin, mode='valid', method='direct')
+        #ymask, xmask = np.where(covered >= ws_bin.sum() - 1e-6)
+        ymask, xmask = np.where(valid_anchor)
 
         #if maskheight > 1:
         #    #domainmask[:maskheight, :] = 0.    # Trim southern edge-confusing because the domain is flipped N-S for consistency with xarray
@@ -2163,11 +2191,22 @@ if FreqAnalysis:
             intenselat = intenselat[int_ymin:int_ymax+1]
             intenselon = intenselon[int_xmin:int_xmax+1]
 
+            # BLF 09152026: the +1 padding above makes intensegrid one row/column larger than the storm-catalog grid, so crop to match
+            intensegrid = intensegrid[:domainmask.shape[0], :domainmask.shape[1]]
+            intenselat = intenselat[:domainmask.shape[0]]
+            intenselon = intenselon[:domainmask.shape[1]]
+            if not (np.allclose(intenselat, np.asarray(latrange)) and np.allclose(intenselon, np.asarray(lonrange))):
+                sys.exit("The design field grid does not align with the storm catalog grid")
+
             y_min, x_min = np.argwhere(catmask != 0).min(axis=0)
             y_max, x_max = np.argwhere(catmask != 0).max(axis=0)
 
-            homegrid = np.multiply(intensegrid[y_min:y_max + 1, x_min:x_max + 1], trimmask)
-
+            # BLF 9/15/2026 I don't think we want to multiply by the trimmask here b/c we already took the log. 
+            # If we remove from the transposition location as well, and only do with Rain Sum should work fine. Also added check that domain has full design field. 
+            #homegrid = np.multiply(intensegrid[y_min:y_max + 1, x_min:x_max + 1], trimmask)
+            homegrid = intensegrid[y_min:y_max + 1, x_min:x_max + 1]
+            if np.any(~np.isfinite(intensegrid[domainmask > 0])):
+                sys.exit("Design field is missing inside the transposition domain")
 
 
         elif '.asc' in rescalingfile:
@@ -2227,7 +2266,7 @@ if FreqAnalysis:
                 maxpass=np.nansum(catrain[j:j+int(duration*60./rainprop.timeres),:],axis=0)
                 
 
-                maxtemp,tempy,tempx=RainyDay.catalogFFT_irregular(temparray,trimmask)
+                maxtemp,tempy,tempx=RainyDay.catalogFFT_irregular(temparray,trimmask, valid_anchor)
      
                 if maxtemp>dur_max:
                     dur_max=maxtemp
