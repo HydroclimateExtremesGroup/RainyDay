@@ -8,3 +8,7 @@ Source/RainyDay_utilities_Py3/__pycache__/__init__.cpython-311.pyc
 Source/RainyDay_utilities_Py3/__pycache__/__init__.cpython-38.pyc
 Source/.DS_Store
 .DS_Store
+
+# Claude Code generated / local config
+.claude/
+CLAUDE.md
