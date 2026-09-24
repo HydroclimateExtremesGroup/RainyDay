@@ -20,6 +20,35 @@
 #==============================================================================
 # THIS DOCUMENT CONTAINS VARIOUS FUNCTIONS NEEDED TO RUN RainyDay
 #==============================================================================
+#
+# RainyDay_Py3.py imports this module as "RainyDay" and calls these functions
+# as RainyDay.<function>. Every function has a docstring; the "Status" line at
+# the end of each says whether RainyDay_Py3.py currently uses it.
+#
+# Rough organization of this file:
+#   1. Small utilities: smoothing, KDE bandwidth, JSON duplicate-key check
+#   2. Storm catalog search: find where the watershed-weighted rainfall is
+#      largest (catalogFFT_irregular is the active one; others are legacy)
+#   3. Transposition / resampling: basin rainfall for each transposed
+#      position, with optional rescaling (SSTalt, SSTalt_normalized,
+#      SSTalt_singlecell) and kernel-based location sampling (numbakernel*)
+#   4. Grid and mask setup: findsubbox, rastermask
+#   5. NetCDF input/output: read input rainfall, write/read storm catalogs,
+#      write scenario files
+#   6. File-list, date and misc. helpers
+#
+# Conventions used throughout:
+#   - Rainfall arrays are ordered (time, lat, lon) and stored south-up, i.e.
+#     row 0 is the southernmost latitude.
+#   - Grid coordinates are treated as the upper-left corner of each cell.
+#   - Transposition positions (x, y) are the column/row index of the
+#     upper-left corner of the watershed's bounding rectangle ("trimmask").
+#   - Rainfall is a rate in mm/hr. Summing over time and multiplying by
+#     timeres/60 gives depth in mm; dividing a mask-weighted sum by
+#     mnorm = sum(trimmask) gives a basin average.
+#   - -9999 (sometimes -999) is the missing-data / "no storm" flag.
+#
+#==============================================================================
 #%%                                               
 import os
 import sys
@@ -27,60 +56,22 @@ import numpy as np
 import scipy as sp
 import glob
 import re     
-from datetime import datetime, date    
-import time
 import fiona
 import copy
-#import nctoolkit
-
 from netCDF4 import Dataset, num2date
-#import h5netcdf
-import rasterio
 from rasterio.transform import from_origin
-from rasterio.shutil import delete
 from rasterio.mask import mask
 from rasterio.io import MemoryFile
 import pandas as pd
 from numba import prange,jit
-
 import pyproj
-from shapely.ops import transform
-
 import shapely
-from shapely.ops import unary_union
 from shapely.geometry import shape
 import json
 import xarray as xr
-
-import geopandas as gp
-
-
-from scipy.stats import norm
-from scipy.stats import lognorm
-
-# plotting stuff, really only needed for diagnostic plots
-import matplotlib.pyplot as plt
-import matplotlib
-from matplotlib.colors import LogNorm 
-
-import subprocess
-try:
-    os.environ.pop('PYTHONIOENCODING')
-except KeyError:
-    pass
-
-import warnings
-warnings.filterwarnings("ignore")
-
-from numba.types import int32,int64,float32,uint32
 import linecache
-import dask
-from dask.diagnostics import ProgressBar
-from numba import njit, prange
-
 from scipy.signal import correlate
-from scipy.signal import fftconvolve
-from scipy.signal import oaconvolve
+from datetime import datetime
 
 
 
@@ -91,23 +82,43 @@ from scipy.signal import oaconvolve
 
 def catalogFFT_irregular(temparray, trimmask, valid_anchor):
     """
-    CPU version using FFT-based convolution (cross-correlation equivalent to manual loop).
+    Find the location of maximum basin-averaged rainfall in one accumulated
+    rainfall field. This is the core search used during storm catalog creation.
 
-    Parameters:
-    -----------
-    temparray : np.ndarray
-        2D rainfall field (float32 or float64)
-    trimmask : np.ndarray
-        2D storm mask kernel (float32 or float64)
-    valid_anchor : np.ndarray (bool)
-        Array where true when the whole watershed footprint fits in domain.
+    The watershed mask (``trimmask``) is slid over every possible position in
+    the transposition domain using FFT/direct cross-correlation, which is
+    mathematically the same as looping over every position and computing
+    ``nansum(temparray[y:y+h, x:x+w] * trimmask)``, but much faster. Only
+    "anchor" positions where the whole watershed footprint lies inside the
+    domain (``valid_anchor``) are eligible.
 
-    Returns:
-    --------
+    Added by DBW (July 2025, from Gabriel Perez); edited by BLF (Sept 2026) to
+    require that the full watershed footprint fall inside the domain.
+
+    Parameters
+    ----------
+    temparray : np.ndarray, shape (ny, nx)
+        Rainfall field accumulated over the catalog duration (sum of rates;
+        NaNs are treated as zero).
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+        Watershed mask trimmed to its bounding rectangle. Values are weights
+        (0-1 for a fractional mask).
+    valid_anchor : np.ndarray of bool, shape (ny-maskheight+1, nx-maskwidth+1)
+        True where the upper-left corner of the mask can be placed such that
+        the entire watershed footprint is inside the transposition domain.
+
+    Returns
+    -------
     rmax : float
-        Maximum value of convolution
+        Maximum mask-weighted rainfall sum (not yet normalized by mask area).
     ymax, xmax : int
-        Location (row, col) of maximum alignment
+        Row/column index of the upper-left corner of the mask at the maximum.
+
+    Notes
+    -----
+    Exits the program if the watershed fits nowhere in the domain. Ties are
+    resolved by ``np.argmax`` (first occurrence in row-major order).
+    Status: used by RainyDay_Py3.py (catalog creation and duration trimming).
     """
     # Clean NaNs
     temparray_clean = np.nan_to_num(temparray)
@@ -130,11 +141,34 @@ def catalogFFT_irregular(temparray, trimmask, valid_anchor):
     return float(rmax), int(ymax), int(xmax)
 
 
-# =============================================================================
-# Smoother that is compatible with nan values. Adapted from https://stackoverflow.com/questions/18697532/gaussian-filtering-a-image-with-nan-in-python
-# =============================================================================
 
 def mysmoother(inarray,sigma=[3,3]):
+    """
+    NaN-aware Gaussian smoothing ("normalized convolution").
+
+    NaNs are set to zero, the field and a matching weight array (1 where valid,
+    0 where NaN) are both Gaussian-filtered, and the smoothed field is divided
+    by the smoothed weights. This prevents NaNs from spreading and avoids the
+    edges being biased toward zero. Cells that were NaN in the input are NaN
+    in the output.
+
+    Parameters
+    ----------
+    inarray : np.ndarray
+        Array to smooth (any dimension; typically 2D).
+    sigma : list of float, optional
+        Gaussian standard deviation (in grid cells) for each dimension of
+        ``inarray``. Must have the same length as ``inarray.shape``.
+
+    Returns
+    -------
+    np.ndarray
+        Smoothed array, same shape as ``inarray``.
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py (transposition kernel and rescaling fields).
+    """
     if len(sigma)!=len(inarray.shape):
         sys.exit("there seems to be a mismatch between the sigma dimension and the dimension of the array you are trying to smooth")
     V=inarray.copy()
@@ -148,18 +182,82 @@ def mysmoother(inarray,sigma=[3,3]):
     outarray[np.isnan(inarray)]=np.nan
     return outarray
 
+
+
 def my_kde_bandwidth(obj, fac=1):     # this 1.5 choice is completely subjective :(
     #We use Scott's Rule, multiplied by a constant factor
+    """
+    Bandwidth rule passed to ``scipy.stats.gaussian_kde(bw_method=...)``.
+
+    Returns Scott's rule factor, ``n**(-1/(d+4))``, times a constant ``fac``.
+    It is used to build the kernel density estimate of storm-center locations
+    that defines the non-uniform transposition probability map.
+
+    Parameters
+    ----------
+    obj : scipy.stats.gaussian_kde
+        The KDE object (supplies ``n`` = number of points, ``d`` = dimensions).
+    fac : float, optional
+        Multiplier on Scott's rule. Default 1 (the inline comment about 1.5
+        refers to an older default).
+
+    Returns
+    -------
+    float
+        Bandwidth factor.
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
+    """
     return np.power(obj.n, -1./(obj.d+4)) * fac
 
+
+
 def find_nearest(array,value):
+    """
+    Return the index of the element of ``array`` closest to ``value``.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        1D array to search (e.g., the return-period array).
+    value : float
+        Target value.
+
+    Returns
+    -------
+    int
+        Index of the nearest element (first one in case of ties).
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py (selecting RETURNLEVELS / RETURNTHRESHOLD).
+    """
     idx = (np.abs(array-value)).argmin()
     return idx
 
 def convert_3D_2D(geometry):
-    '''
-    Takes a GeoSeries of 3D Multi/Polygons (has_z) and returns a list of 2D Multi/Polygons
-    '''
+    """
+    Takes a GeoSeries of 3D Multi/Polygons (has_z) and returns a list of 2D
+    Multi/Polygons by dropping the z-coordinate.
+
+    Parameters
+    ----------
+    geometry : iterable of shapely geometries
+        Typically a GeoSeries.
+
+    Returns
+    -------
+    list of shapely.geometry.Polygon or MultiPolygon
+
+    Notes
+    -----
+    Only geometries with a z-coordinate are returned; 2D geometries in the
+    input are skipped. Iterating ``for ap in p`` over a MultiPolygon uses the
+    Shapely 1.x API (Shapely 2 requires ``p.geoms``).
+    Status: not currently called.
+    """
     new_geo = []
     for p in geometry:
         if p.has_z:
@@ -180,7 +278,27 @@ def convert_3D_2D(geometry):
 
 # adapted from https://pythonadventures.wordpress.com/2016/03/06/detect-duplicate-keys-in-a-json-file/
 def dict_raise_on_duplicates(ordered_pairs):
-    """Reject duplicate keys."""
+    """
+    ``object_pairs_hook`` for ``json.loads`` that rejects duplicate keys.
+
+    Standard JSON parsing silently keeps the last value when a key appears
+    twice, which can hide mistakes in a RainyDay parameter file. This hook
+    stops the program instead.
+
+    Parameters
+    ----------
+    ordered_pairs : list of (key, value) tuples
+        Supplied by ``json.loads``.
+
+    Returns
+    -------
+    dict
+
+    Notes
+    -----
+    Adapted from https://pythonadventures.wordpress.com/2016/03/06/detect-duplicate-keys-in-a-json-file/
+    Status: used by RainyDay_Py3.py when reading the parameter (.json) file.
+    """
     d = {}
     for k, v in ordered_pairs:
         if k in d:
@@ -194,30 +312,37 @@ def dict_raise_on_duplicates(ordered_pairs):
 # THIS IS THE CORE OF THE STORM CATALOG CREATION TECHNIQUE
 #==============================================================================
     
-#def catalogweave(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum):
-#    rainsum[:]=0.
-#    code= """
-#        #include <stdio.h>
-#        int i,j,x,y;
-#        for (x=0;x<xlen;x++) {
-#            for (y=0;y<ylen;y++) {
-#                for (j=0;j<maskheight;j++) {
-#                    for (i=0;i<maskwidth;i++) {
-#                        rainsum(y,x)=rainsum(y,x)+temparray(y+j,x+i)*trimmask(j,i);                     
-#                    }                               
-#                }
-#            }                      
-#        }
-#    """
-#    vars=['temparray','trimmask','xlen','ylen','maskheight','maskwidth','rainsum']
-#    sp.weave.inline(code,vars,type_converters=converters.blitz,compiler='gcc')
-#    rmax=np.nanmax(rainsum)
-#    wheremax=np.where(rainsum==rmax)
-#    return rmax, wheremax[0][0], wheremax[1][0]
-#    
-
 
 def catalogAlt(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask):
+    """
+    Brute-force (pure Python) version of the storm-catalog spatial search for
+    rectangular domains. Slides ``trimmask`` over every position and returns
+    the location of maximum mask-weighted rainfall.
+
+    Parameters
+    ----------
+    temparray : np.ndarray, shape (ny, nx)
+        Accumulated rainfall field.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+        Trimmed watershed mask.
+    xlen, ylen : int
+        Number of candidate positions in x and y.
+    maskheight, maskwidth : int
+        Dimensions of ``trimmask``.
+    rainsum : np.ndarray, shape (ylen, xlen)
+        Work array; overwritten with the mask-weighted sum at each position.
+    domainmask : np.ndarray
+        Unused here (kept for a common call signature).
+
+    Returns
+    -------
+    rmax : float
+    ymax, xmax : int
+
+    Notes
+    -----
+    LEGACY: superseded by ``catalogFFT_irregular``. Status: not currently called.
+    """
     rainsum[:]=0.
     for i in range(0,(ylen)*(xlen)):
         y=i//xlen
@@ -230,6 +355,27 @@ def catalogAlt(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainm
     return rmax, wheremax[0][0], wheremax[1][0]
 
 def catalogAlt_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask):
+    """
+    Brute-force version of the storm-catalog spatial search for irregular
+    transposition domains. A position is considered only if the mask's
+    horizontal and vertical center lines intersect the domain.
+
+    Parameters
+    ----------
+    See ``catalogAlt``. ``domainmask`` (1 inside the domain, 0 outside) is
+    used to screen positions.
+
+    Returns
+    -------
+    rmax : float
+    ymax, xmax : int
+
+    Notes
+    -----
+    LEGACY: superseded by ``catalogFFT_irregular``. Uses ``maskheight/2`` as an
+    array index, which produces a float and would fail under Python 3.
+    Status: not currently called.
+    """
     rainsum[:]=0.
     for i in range(0,(ylen)*(xlen)):
         y=i//xlen
@@ -246,188 +392,132 @@ def catalogAlt_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rains
     return rmax, wheremax[0][0], wheremax[1][0]
 
 
-
-# @jit(nopython=True, fastmath =  True)
-# def catalogNumba_irregular(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,domainmask,stride=1):
-#     rainsum[:]=0.
-#     halfheight=int32(np.ceil(maskheight/2))
-#     halfwidth=int32(np.ceil(maskwidth/2))
-#     for i in range(0,(ylen)*(xlen),stride):
-#         y=i//xlen
-#         x=i-y*xlen
-#         # Ensure that the slice does not exceed the bounds of temparray
-
-    #     if np.any(np.equal(domainmask[y+halfheight, x:x+maskwidth], 1.)) and np.any(np.equal(domainmask[y:y+maskheight, x+halfwidth], 1.)):
-    #         rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
-    #
-    #
-    #     else:
-    #         rainsum[y, x] = 0
-    #
-    # #wheremax=np.argmax(rainsum)
-    # rmax=np.nanmax(rainsum)
-    # wheremax=np.where(np.equal(rainsum,rmax))
-    # return rmax, wheremax[0][0], wheremax[1][0]
-
-# @jit(nopython=True, fastmath =  True)
-# def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop, maskheight, maskwidth, rainsum, stride=1):
-#     rainsum[:, :] = 0.0  # clear output array
-
-#     rmax = -1e30
-#     ymax = -1
-#     xmax = -1
-
-#     for y in range(0, yloop):
-#         for x in range(0, xloop, stride):
-#             # Define all 4 symmetric locations
-#             positions = [
-#                 (y, x),  # original
-#                 (y, xlen - x - 1),  # x-flipped
-#                 (ylen - y - 1, x),  # y-flipped
-#                 (ylen - y - 1, xlen - x - 1)  # x & y flipped
-#             ]
-
-#             for yy, xx in positions:
-#                 # Ensure we’re within bounds
-#                 if yy + maskheight <= temparray.shape[0] and xx + maskwidth <= temparray.shape[1]:
-#                     patch = temparray[yy:yy + maskheight, xx:xx + maskwidth]
-#                     value = np.nansum(patch * trimmask)
-#                     rainsum[yy, xx] = value
-
-#                     if not np.isnan(value) and value > rmax:
-#                         rmax = value
-#                         ymax = yy
-#                         xmax = xx
-
-#     return rmax, ymax, xmax
-
-# # Testing (parallel, including symmetric positions)
+# Testing (parallel, without symmetric positions). FASTEST for large domains
 # @njit(parallel=True, fastmath=True)
 # def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop,
-#                                      maskheight, maskwidth, rainsum, stride=1):
-#     # Ensure loop bounds are integers
-#     xloop = int(xloop)
-#     yloop = int(yloop)
-#     xlen = int(xlen)
-#     ylen = int(ylen)
+#                            maskheight, maskwidth, rainsum, stride=1):
+#     # Since we are not doing symmetric positions, we can simplify the logic
+#     """
+#     Numba-parallel version of the storm-catalog spatial search.
 
-#     # Clear rainsum
+#     Each row of candidate positions is processed in parallel; the mask-weighted
+#     sum at each position is accumulated explicitly while skipping NaNs. A
+#     parallel per-row max is then reduced serially to the global max.
+
+#     Parameters
+#     ----------
+#     temparray : np.ndarray, shape (ny, nx)
+#         Accumulated rainfall field.
+#     trimmask : np.ndarray, shape (maskheight, maskwidth)
+#         Trimmed watershed mask.
+#     xlen, ylen : int
+#         Number of candidate positions in x and y.
+#     xloop, yloop : int
+#         Ignored (overwritten with ``xlen``/``ylen``); kept for signature
+#         compatibility with ``catalogNumba``.
+#     maskheight, maskwidth : int
+#         Dimensions of ``trimmask``.
+#     rainsum : np.ndarray, shape (ylen, xlen)
+#         Work array, overwritten.
+#     stride : int, optional
+#         Step between candidate x positions (CATALOGACCELERATOR). Default 1.
+
+#     Returns
+#     -------
+#     rmax : float
+#     ymax, xmax : int
+
+#     Notes
+#     -----
+#     Despite its name, it does not use a domain mask. Superseded by
+#     ``catalogFFT_irregular``. Status: not currently called.
+#     """
+#     xloop = int(xlen)
+#     yloop = int(ylen)
+
 #     rainsum[:, :] = 0.0
 
-#     # Parallel loop over y
+#     # Parallel storm scan
 #     for y in prange(0, yloop):
 #         for x in range(0, xloop, stride):
-#             # Define symmetric positions
-#             positions = [
-#                 (int(y), int(x)),
-#                 (int(y), int(xlen - x - 1)),
-#                 (int(ylen - y - 1), int(x)),
-#                 (int(ylen - y - 1), int(xlen - x - 1))
-#             ]
+#             if y + maskheight > temparray.shape[0] or x + maskwidth > temparray.shape[1]:
+#                 continue
 
-#             for yy, xx in positions:
-#                 if yy + maskheight > temparray.shape[0] or xx + maskwidth > temparray.shape[1]:
-#                     continue
+#             val = 0.0
+#             for i in range(maskheight):
+#                 for j in range(maskwidth):
+#                     a = temparray[y + i, x + j]
+#                     b = trimmask[i, j]
+#                     if not np.isnan(a) and not np.isnan(b):
+#                         val += a * b
 
-#                 val = 0.0
-#                 for i in range(maskheight):
-#                     for j in range(maskwidth):
-#                         a = temparray[yy + i, xx + j]
-#                         b = trimmask[i, j]
-#                         if not np.isnan(a) and not np.isnan(b):
-#                             val += a * b
+#             rainsum[y, x] = val
 
-#                 rainsum[yy, xx] = val
+#     # --- Parallel row-wise reduction ---
+#     row_max = np.full(rainsum.shape[0], -1e30)
+#     row_x = np.full(rainsum.shape[0], -1, dtype=np.int32)
 
-#     # Serial reduction to find max
+#     for y in prange(rainsum.shape[0]):
+#         max_val = -1e30
+#         max_x = -1
+#         for x in range(rainsum.shape[1]):
+#             val = rainsum[y, x]
+#             if val > max_val:
+#                 max_val = val
+#                 max_x = x
+#         row_max[y] = max_val
+#         row_x[y] = max_x
+
+#     # --- Serial reduction over rows ---
 #     rmax = -1e30
 #     ymax = -1
 #     xmax = -1
 #     for y in range(rainsum.shape[0]):
-#         for x in range(rainsum.shape[1]):
-#             val = rainsum[y, x]
-#             if val > rmax:
-#                 rmax = val
-#                 ymax = y
-#                 xmax = x
+#         if row_max[y] > rmax:
+#             rmax = row_max[y]
+#             ymax = y
+#             xmax = row_x[y]
 
 #     return rmax, ymax, xmax
 
-# Testing (parallel, without symmetric positions). FASTEST for large domains
-@njit(parallel=True, fastmath=True)
-def catalogNumba_irregular(temparray, trimmask, xlen, ylen, xloop, yloop,
-                           maskheight, maskwidth, rainsum, stride=1):
-    # Since we are not doing symmetric positions, we can simplify the logic
-    xloop = int(xlen)
-    yloop = int(ylen)
 
-    rainsum[:, :] = 0.0
-
-    # Parallel storm scan
-    for y in prange(0, yloop):
-        for x in range(0, xloop, stride):
-            if y + maskheight > temparray.shape[0] or x + maskwidth > temparray.shape[1]:
-                continue
-
-            val = 0.0
-            for i in range(maskheight):
-                for j in range(maskwidth):
-                    a = temparray[y + i, x + j]
-                    b = trimmask[i, j]
-                    if not np.isnan(a) and not np.isnan(b):
-                        val += a * b
-
-            rainsum[y, x] = val
-
-    # --- Parallel row-wise reduction ---
-    row_max = np.full(rainsum.shape[0], -1e30)
-    row_x = np.full(rainsum.shape[0], -1, dtype=np.int32)
-
-    for y in prange(rainsum.shape[0]):
-        max_val = -1e30
-        max_x = -1
-        for x in range(rainsum.shape[1]):
-            val = rainsum[y, x]
-            if val > max_val:
-                max_val = val
-                max_x = x
-        row_max[y] = max_val
-        row_x[y] = max_x
-
-    # --- Serial reduction over rows ---
-    rmax = -1e30
-    ymax = -1
-    xmax = -1
-    for y in range(rainsum.shape[0]):
-        if row_max[y] > rmax:
-            rmax = row_max[y]
-            ymax = y
-            xmax = row_x[y]
-
-    return rmax, ymax, xmax
-
-
-# # Note: This version requires xlen and ylen defined in RainyDay_Py3.py defined as follow:
-# # xlen =rainprop.subdimensions[1]-maskwidth
-# # ylen =rainprop.subdimensions[0]-maskheight-2 
-# # That definition is inconsistent since it removes some edges in the padding.
-# @jit(nopython=True, fastmath =  True)
-# def catalogNumba_irregular(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
-#     for y in range(0, int32(yloop)):
-#         for x in range(0, int32(xloop),stride):
-#             rainsum[y, x] = np.nansum(np.multiply(temparray[y:(y+maskheight), x:(x+maskwidth)], trimmask))
-#             rainsum[y, xlen-x-1] = np.nansum(np.multiply(temparray[y:(y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))           
-#             rainsum[ylen-y-1, x] = np.nansum(np.multiply(temparray[ylen-y-1:(ylen-y-1+maskheight), x:(x+maskwidth)], trimmask))
-#             rainsum[ylen-y-1, xlen-x-1] = np.nansum(np.multiply(temparray[ylen-y:(ylen-y+maskheight), xlen-x:(xlen-x+maskwidth)], trimmask))
-
-#     #wheremax=np.argmax(rainsum)
-#     rmax=np.nanmax(rainsum)
-#     wheremax=np.where(np.equal(rainsum,rmax))
-    
-#     return rmax, wheremax[0][0], wheremax[1][0]
 
 @jit(nopython=True,  fastmath =  True)
 def catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,rainsum,stride=1):
+    """
+    Numba version of the storm-catalog spatial search that exploits symmetry:
+    each loop iteration fills four positions (from each corner of the domain
+    inward), so only about a quarter of the loop iterations are needed.
+
+    Parameters
+    ----------
+    temparray : np.ndarray, shape (ny, nx)
+        Accumulated rainfall field.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+        Trimmed watershed mask.
+    xlen, ylen : int
+        Number of candidate positions in x and y.
+    xloop, yloop : int
+        Number of loop iterations in x and y (about half of xlen/ylen).
+    maskheight, maskwidth : int
+        Dimensions of ``trimmask``.
+    rainsum : np.ndarray, shape (ylen, xlen)
+        Work array, overwritten.
+    stride : int, optional
+        Step between candidate x positions. Default 1.
+
+    Returns
+    -------
+    rmax : float
+    ymax, xmax : int
+
+    Notes
+    -----
+    LEGACY: superseded by ``catalogFFT_irregular``. The mirrored positions are
+    written to ``rainsum[..., xlen-x-1]`` but computed from a window starting
+    at ``xlen-x`` (off by one); see the review notes.
+    Status: not currently called.
+    """
     for y in range(0, int32(yloop)):
         for x in range(0, int32(xloop),stride):
 
@@ -444,23 +534,39 @@ def catalogNumba(temparray,trimmask,xlen,ylen,xloop,yloop,maskheight,maskwidth,r
     wheremax=np.where(np.equal(rainsum,rmax))
     return rmax, wheremax[0][0], wheremax[1][0]
 
-# @jit(nopython=True)
-# def catalogNumba(temparray,trimmask,xlen,ylen,maskheight,maskwidth,rainsum,stride=1):
-#     rainsum[:]=0.
-#     for i in range(0,(ylen)*(xlen),stride):
-#         y=i//xlen
-#         x=i-y*xlen
-#         #print x,y
-#         rainsum[y,x]=np.nansum(np.multiply(temparray[(y):(y+maskheight),(x):(x+maskwidth)],trimmask))
-
-#     #wheremax=np.argmax(rainsum)
-#     rmax=np.nanmax(rainsum)
-#     wheremax=np.where(np.equal(rainsum,rmax))
-#     return rmax, wheremax[0][0], wheremax[1][0]
 
 
 @jit(nopython=True)
 def DistributionBuilder(intenserain,tempmax,xlen,ylen,checksep):
+    """
+    Maintain, at every grid cell, a running list of the N largest storm totals
+    ("intensity distribution"), with a separation check so the same storm is
+    not counted twice.
+
+    For each cell, if the cell is flagged in ``checksep`` (the previous time
+    step already contributed to this storm), the stored value is updated in
+    place if the new value is larger. Otherwise, if the new value exceeds the
+    smallest stored value, it replaces it and the cell is flagged.
+
+    Parameters
+    ----------
+    intenserain : np.ndarray, shape (N, ny, nx)
+        Current top-N storm totals at each cell (updated in place).
+    tempmax : np.ndarray, shape (ny, nx)
+        Candidate storm totals for the current time step.
+    xlen, ylen : int
+        Grid dimensions.
+    checksep : np.ndarray of bool, shape (N, ny, nx)
+        Flags marking which slot the ongoing storm occupies at each cell.
+
+    Returns
+    -------
+    intenserain, checksep : np.ndarray
+
+    Notes
+    -----
+    LEGACY: supported the old intensity-file workflow. Status: not currently called.
+    """
     for y in np.arange(0,ylen):
         for x in np.arange(0,xlen):
             if np.any(checksep[:,y,x]):
@@ -483,6 +589,15 @@ def DistributionBuilder(intenserain,tempmax,xlen,ylen,checksep):
 
 # slightly faster numpy-based version of above
 def DistributionBuilderFast(intenserain,tempmax,xlen,ylen,checksep):
+    """
+    Vectorized NumPy version of ``DistributionBuilder`` (same inputs/outputs).
+
+    Notes
+    -----
+    LEGACY. The line ``intenserain[minsep,flatsep][islarger]=...`` uses chained
+    fancy indexing, which assigns into a temporary copy, so that update has no
+    effect; see the review notes. Status: not currently called.
+    """
     minrain=np.min(intenserain,axis=0)
     if np.any(checksep):
         
@@ -507,6 +622,7 @@ def DistributionBuilderFast(intenserain,tempmax,xlen,ylen,checksep):
 
 
 
+# LEGACY (commented out, not used): old SSTalt without rescaling; superseded by SSTalt below. Candidate for removal.
 #def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intense_data=False):
 #    rainsum=np.zeros((len(sstx)),dtype='float32')
 #   nreals=len(rainsum)
@@ -518,6 +634,7 @@ def DistributionBuilderFast(intenserain,tempmax,xlen,ylen,checksep):
 
 
 
+# LEGACY (debugging leftovers): variable assignments used to test SSTalt interactively. Candidate for removal.
 # sstx=whichx[whichstorms==i,pt]
 # ssty=whichy[whichstorms==i,pt]
 # durcheck=durcorrection                
@@ -531,6 +648,63 @@ def DistributionBuilderFast(intenserain,tempmax,xlen,ylen,checksep):
 
 #@jit(nopython=True,fastmath=True)
 def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,intensestd=None,intensecorr=None,homemean=None,homestd=None,durcheck=False):
+    """
+    Compute the basin-averaged rainfall for a set of transposed positions of
+    one parent storm, optionally applying a "ratio rescaling" multiplier.
+
+    For each position k, the storm field ``passrain`` is sampled at
+    ``[ssty[k]:ssty[k]+maskheight, sstx[k]:sstx[k]+maskwidth]`` and multiplied
+    by ``trimmask``. If every value in that window is below 0.5 (mm/hr summed
+    over time), the result is set to 0 as a shortcut.
+
+    Three rescaling modes are supported, chosen by which optional arguments
+    are given:
+
+    * none (default): multiplier = 1.
+    * deterministic (``intensemean`` and ``homemean``): multiplier =
+      exp(homemean - intensemean[y, x]), i.e. the ratio of the (log-space)
+      mean storm total at the target location to that at the source location.
+    * stochastic (also ``intensestd``, ``intensecorr``, ``homestd``): the
+      multiplier is drawn from a lognormal distribution whose log-mean is the
+      deterministic ratio and whose log-std accounts for the correlation
+      between the two locations.
+
+    Multipliers above ``maxmultiplier`` (1.5) are reset to 1.
+
+    Parameters
+    ----------
+    passrain : np.ndarray
+        Parent storm rainfall. Shape (ny, nx) when ``durcheck`` is False
+        (already summed over time); shape (nt, ny, nx) when ``durcheck`` is
+        True (rolling sums, one per candidate start time).
+    sstx, ssty : np.ndarray of int, shape (npos,)
+        Upper-left x/y indices of each transposition.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+    maskheight, maskwidth : int
+    intensemean, intensestd, intensecorr : np.ndarray, optional
+        Gridded log-space mean, std, and home-location correlation of storm
+        totals across the domain.
+    homemean, homestd : float, optional
+        Log-space mean and std of storm totals at the watershed ("home").
+    durcheck : bool, optional
+        If True, apply the duration correction: take the maximum over all
+        time windows in ``passrain`` and record which window.
+
+    Returns
+    -------
+    rainsum : np.ndarray of float32, shape (npos,)
+        Mask-weighted sum (still needs ``* timeres/60 / mnorm`` to become a
+        basin-average depth in mm).
+    multiout : np.ndarray, shape (npos,)
+        Only returned when rescaling. -999 where the storm had no rain.
+    whichstep : np.ndarray of int32, shape (npos,)
+        Index of the maximizing time window (0 if ``durcheck`` is False).
+
+    Notes
+    -----
+    The number of returned values (2 or 3) depends on the rescaling mode.
+    Status: used by RainyDay_Py3.py.
+    """
     maxmultiplier=1.5
     
     rainsum=np.zeros((len(sstx)),dtype='float32')
@@ -569,10 +743,15 @@ def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,int
                 #sys.exit('need to fix short duration part')
                 muR=homemean-intensemean[y,x]      #LY: we don't use mean, so here we need to revise and use trimmask
                 if doall:
+                    # std of the log-ratio of two correlated normals: var(A-B) = sA^2 + sB^2 - 2*rho*sA*sB
                     stdR=np.sqrt(np.power(homestd,2)+np.power(intensestd[y,x],2)-2.*intensecorr[y,x]*homestd*intensestd[y,x])
                    # multiplier=sp.stats.lognorm.ppf(rquant[k],stdR,loc=0,scale=np.exp(muR))     
                     #multiplier=10.
                     #while multiplier>maxmultiplier:       # who knows what the right number is to use here...
+                    # Lognormal draw via the inverse normal CDF: for u ~ U(0,1),
+                    # sqrt(2)*erfinv(2u-1) is a standard normal quantile, so
+                    # multiplier = exp(muR + stdR*z). (erfinv is recomputed for all
+                    # positions on every k; only element k is used.)
                     inverrf=sp.special.erfinv(2.*rquant-1.)
                     multiplier=np.exp(muR+np.sqrt(2.*np.power(stdR,2))*inverrf[k])
                     
@@ -613,6 +792,7 @@ def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,int
 # added Lei 02122025: Dimensionless rescaling
 # updated Lei 04012025: extract top n storm/multiplier for writing scenarios (reduce memory)
 # =========================================================================================
+# LEGACY (commented out, not used): earlier SSTalt_normalized without top-N scenario tracking; superseded by the active version below. Candidate for removal.
 # @jit(fastmath=True)
 # def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, intensegrid=None, homegrid=None, durcheck=False):
 #     #maxmultiplier = 1.5  #LY: should we use this?
@@ -686,7 +866,63 @@ def SSTalt(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,int
 
 @jit(fastmath=True)
 def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top_whichrain, top_multiplier, durcheck=False, intensegrid=None, homegrid=None, Scenarios=False, storm_pos=None):
+    """
+    "Normalized" (dimensionless) SST: compute basin rainfall for a set of
+    transposed positions of one parent storm, rescaling each cell by the ratio
+    of a design-precipitation field at the target versus the home location.
 
+    Added by Lei Yan (Feb 2025); top-N tracking added April 2025; BLF (Sept
+    2026) removed the ``trimmask`` weighting of the log-field and set
+    non-finite multipliers to 0.
+
+    For each transposed position k, a cell-by-cell multiplier is computed as
+    ``exp(homegrid - intensegrid[y:y+h, x:x+w])``, where both grids are the log
+    of a design precipitation depth (e.g., the 10-year quantile). The
+    multiplier field is applied to the storm rainfall before mask-weighting and
+    summing. Positions where all rainfall is below 0.5 are set to 0.
+
+    When ``Scenarios`` is True, the function also keeps, for every synthetic
+    year and realization, the ``nperyear`` largest rainfall values and their
+    multiplier fields in ``top_whichrain``/``top_multiplier``. Those arrays are
+    updated in place and kept sorted in ascending order (index 0 = smallest),
+    so the multipliers are available later for writing scenario files without
+    storing a multiplier field for every sampled storm.
+
+    Parameters
+    ----------
+    passrain : np.ndarray
+        Parent storm rainfall; (ny, nx) or (nt, ny, nx) if ``durcheck``.
+    sstx, ssty : np.ndarray of int, shape (npos,)
+        Upper-left indices of each transposition.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+    maskheight, maskwidth : int
+    top_whichrain : np.ndarray, shape (nperyear, nsimulations, nrealizations)
+        Running top-N rainfall values (updated in place).
+    top_multiplier : np.ndarray, shape (nperyear, nsimulations, nrealizations, maskheight, maskwidth)
+        Multiplier fields matching ``top_whichrain`` (updated in place).
+    durcheck : bool, optional
+        Apply the duration correction (max over time windows).
+    intensegrid : np.ndarray, shape (ny, nx), optional
+        Log design-precipitation field over the transposition domain.
+    homegrid : np.ndarray, shape (maskheight, maskwidth), optional
+        Log design-precipitation field over the watershed rectangle.
+    Scenarios : bool, optional
+        Whether to maintain the top-N arrays.
+    storm_pos : tuple of np.ndarray, optional
+        Output of ``np.where(whichstorms == i)``: (storm slot, synthetic year,
+        realization) for each position. Needed when ``Scenarios`` is True.
+
+    Returns
+    -------
+    rainsum : np.ndarray of float32, shape (npos,)
+        Mask-weighted (rescaled) sums; multiply by ``timeres/60/mnorm`` for
+        basin-average depth in mm.
+    whichstep : np.ndarray of int32, shape (npos,)
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py (NORMALIZEDSST = "dimensionless").
+    """
     rainsum = np.zeros((len(sstx)), dtype='float32')
     whichstep = np.zeros((len(sstx)), dtype='int32')
     nreals = len(rainsum)
@@ -707,11 +943,14 @@ def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top
         y = int(ssty[k])
         x = int(sstx[k])
 
+        # Shortcut: if the transposed window has essentially no rain, skip the computation
         if np.all(np.less(exprain[:, y:y + maskheight, x:x + maskwidth], 0.5)):
             rainsum[k] = 0.
             multiout[k] = -9999.
         else:
             if rescale:
+                # Cell-by-cell multiplier = design depth at home / design depth at target
+                # (both grids are logs, so the ratio is exp of the difference).
                 # BLF 9152026: Since intensegrid is log transfomed, we don't want to multiply by trimmask weightings.
                 #intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth] * trimmask
                 intensegrid_trans = intensegrid[y:y + maskheight, x:x + maskwidth]
@@ -757,6 +996,7 @@ def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top
         # Sort rainsum and extract the corresponding top n multiplier
         # -----------------------------------------------------------
         if Scenarios and (storm_pos is not None):
+            # storm_pos = np.where(whichstorms==i): [0]=storm slot within year, [1]=synthetic year, [2]=realization
             y_ = storm_pos[1][k]
             z_ = storm_pos[2][k]
             val = rainsum[k]
@@ -782,9 +1022,27 @@ def SSTalt_normalized(passrain, sstx, ssty, trimmask, maskheight, maskwidth, top
 # =============================================================================
 @jit(nopython=True, fastmath=True)
 def numba_multimask_calc_rescale(passrain, trimmask, multiplier):
+    """
+    Sum of ``passrain * multiplier * trimmask`` over a watershed window.
+
+    Added by Lei Yan (Feb 2025) for normalized SST.
+
+    Parameters
+    ----------
+    passrain : np.ndarray, shape (maskheight, maskwidth)
+        Rainfall already cropped to the transposed window.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+    multiplier : np.ndarray, shape (maskheight, maskwidth)
+        Cell-by-cell rescaling factors.
+
+    Returns
+    -------
+    float
+    """
     train = passrain * multiplier * trimmask
     rainsum = np.sum(train)
     return rainsum
+# LEGACY (commented out, not used): explicit-loop variant of numba_multimask_calc_rescale. Candidate for removal.
 # @jit(nopython=True, fastmath=True)
 # def numba_multimask_calc_rescale(passrain, trimmask, multiplier):
 #     total = 0.0
@@ -799,6 +1057,23 @@ def numba_multimask_calc_rescale(passrain, trimmask, multiplier):
 #@jit(nopython=True,fastmath=True,parallel=True)
 @jit(nopython=True,fastmath=True)
 def numba_multimask_calc(passrain_temp,trimmask,y,x,maskheight,maskwidth):
+    """
+    Mask-weighted rainfall sum for a watershed window at (y, x).
+
+    Parameters
+    ----------
+    passrain_temp : np.ndarray, shape (ny, nx)
+        Full-domain rainfall field.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+    y, x : int
+        Upper-left corner of the window.
+    maskheight, maskwidth : int
+
+    Returns
+    -------
+    float
+        ``sum(passrain_temp[y:y+h, x:x+w] * trimmask)`` (NaNs propagate).
+    """
     train=np.multiply(passrain_temp[y : y+maskheight , x : x+maskwidth],trimmask)
     rainsum=np.sum(train)       
     return rainsum
@@ -806,6 +1081,29 @@ def numba_multimask_calc(passrain_temp,trimmask,y,x,maskheight,maskwidth):
 
 @jit(fastmath=True)
 def SSTalt_singlecell(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intensemean=None,intensestd=None,intensecorr=None,homemean=None,homestd=None,durcheck=False):
+    """
+    Single-grid-cell (POINTAREA = "point") version of ``SSTalt``.
+
+    Chooses the rescaling mode from the arguments given (none, deterministic,
+    or stochastic; see ``SSTalt``), then delegates the per-position loop to
+    ``killerloop_singlecell``.
+
+    Parameters
+    ----------
+    See ``SSTalt``. ``trimmask``, ``maskheight`` and ``maskwidth`` are accepted
+    for signature compatibility but not used.
+
+    Returns
+    -------
+    rainsum, multiout, whichstep
+        When a rescaling mode is active.
+    rainsum, whichstep
+        When no rescaling is used.
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py for point analyses.
+    """
     rainsum=np.zeros((len(sstx)),dtype='float32')
     whichstep=np.zeros((len(sstx)),dtype='int32')
     nreals=len(rainsum)
@@ -850,6 +1148,39 @@ def SSTalt_singlecell(passrain,sstx,ssty,trimmask,maskheight,maskwidth,intenseme
 #@jit(nopython=True,fastmath=True,parallel=True)
 @jit(nopython=True,fastmath=True)
 def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,durcheck=False,intensemean=None,homemean=None,homestd=None,multiout=None,rquant=None,intensestd=None,intensecorr=None,inverrf=None):
+    """
+    Inner loop for ``SSTalt_singlecell``: rainfall at a single cell for each
+    transposed position, with optional deterministic/stochastic multiplier.
+
+    Parameters
+    ----------
+    passrain : np.ndarray, shape (nt, ny, nx)
+        Storm rainfall (a leading axis of length 1 is added by the caller when
+        ``durcheck`` is False).
+    rainsum, whichstep, multiout : np.ndarray, shape (npos,)
+        Output arrays (filled in place and returned).
+    nreals : int
+        Number of positions.
+    ssty, sstx : np.ndarray of int
+        Cell indices of each transposition.
+    nsteps : int
+        Number of time windows (used only when ``durcheck`` is True).
+    durcheck : bool
+    intensemean, homemean, homestd, intensestd, intensecorr : optional
+        Rescaling statistics (see ``SSTalt``).
+    rquant : unused
+    inverrf : np.ndarray, optional
+        Pre-computed ``erfinv(2u-1)`` values for the stochastic multiplier.
+
+    Returns
+    -------
+    rainsum, multiout, whichstep : np.ndarray
+
+    Notes
+    -----
+    When ``durcheck`` is False the multiplier is computed but not applied and
+    ``multiout`` is not filled; see the review notes.
+    """
     maxmultiplier=1.5  # who knows what the right number is to use here...
     for k in prange(nreals):
         y=int(ssty[k])
@@ -898,6 +1229,7 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
 
 
 
+# LEGACY (commented out, not used): killerloop (multi-cell Numba loop); never adopted. Candidate for removal.
 #@jit(nopython=True,fastmath=True,parallel=True)
 #def killerloop(passrain,rainsum,nreals,ssty,sstx,maskheight,maskwidth,trimmask,nsteps,durcheck):
 #    for k in prange(nreals):
@@ -924,6 +1256,7 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
 
 
 # this function below never worked for some unknown Numba problem-error messages indicated that it wasn't my fault!!! Some problem in tempsum
+# LEGACY (commented out, not used): killerloop variant that never compiled under Numba (see note below). Candidate for removal.
 #@jit(nopython=True,fastmath=True,parallel=True)
 #def killerloop(passrain,rainsum,nreals,ssty,sstx,maskheight,maskwidth,masktile,nsteps,durcheck):
 #    for k in prange(nreals):
@@ -950,6 +1283,7 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
 #==============================================================================
 # THIS VARIANT IS SIMPLER AND UNLIKE SSTWRITE, IT ACTUALLY WORKS RELIABLY!
 #==============================================================================
+# LEGACY (commented out, not used): SSTwriteAlt; pre-2023 scenario writer. Candidate for removal.
 #def SSTwriteAlt(catrain,rlzx,rlzy,rlzstm,trimmask,xmin,xmax,ymin,ymax,maskheight,maskwidth):
 #    nyrs=np.int(rlzx.shape[0])
 #    raindur=np.int(catrain.shape[1])
@@ -969,6 +1303,7 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
 # THIS VARIANT IS SAME AS ABOVE, BUT HAS A MORE INTERESTING RAINFALL PREPENDING PROCEDURE
 #==============================================================================
 
+# LEGACY (commented out, not used): SSTwriteAltPreCat; pre-2023 scenario writer with spin-up rainfall. Candidate for removal.
 #def SSTwriteAltPreCat(catrain,rlzx,rlzy,rlzstm,trimmask,xmin,xmax,ymin,ymax,maskheight,maskwidth,precat,ptime):    
 #    catyears=ptime.astype('datetime64[Y]').astype(int)+1970
 #    ptime=ptime.astype('datetime64[M]').astype(int)-(catyears-1970)*12+1
@@ -991,6 +1326,7 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
 # SAME AS ABOVE, BUT HANDLES STORM ROTATION
 #==============================================================================    
     
+# LEGACY (commented out, not used): SSTwriteAltPreCatRotation; pre-2023 scenario writer with rotation. Candidate for removal.
 #def SSTwriteAltPreCatRotation(catrain,rlzx,rlzy,rlzstm,trimmask,xmin,xmax,ymin,ymax,maskheight,maskwidth,precat,ptime,delarray,rlzanglebin,rainprop):
 ##def SSTwriteAltPreCatRotation(catrain,rlzx,rlzy,rlzstm,trimmask,xmin,xmax,ymin,ymax,maskheight,maskwidth,precat,ptime,delarray,rlzanglebin):
 #    catyears=ptime.astype('datetime64[Y]').astype(int)+1970
@@ -1029,6 +1365,58 @@ def killerloop_singlecell(passrain,rainsum,whichstep,nreals,ssty,sstx,nsteps,dur
        
 @jit(fastmath=True)
 def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,maskheight,maskwidth,precat,ptime,rainprop,rlzanglebin=None,delarray=None,spin=False,flexspin=True,samptype='uniform',cumkernel=None,rotation=False,domaintype='rectangular'):
+    """
+    Build output rainfall scenarios for many transposed storms, optionally
+    rotating the storm and/or prepending "spin-up" rainfall from before the
+    storm.
+
+    For each unique parent storm in ``rlzstm``, and for each realization that
+    uses it, the storm is (optionally) rotated about the transposition center
+    using the precomputed Delaunay triangulations in ``delarray``, cropped to
+    the watershed rectangle at (``rlzy``, ``rlzx``), optionally prefixed with a
+    randomly chosen spin-up period from ``precat`` (same month +/- 1), and
+    multiplied by ``trimmask``.
+
+    Parameters
+    ----------
+    catrain : np.ndarray, shape (nstorms, nt, ny, nx)
+        Storm catalog rainfall.
+    rlzx, rlzy, rlzstm : np.ndarray of int, shape (nout,)
+        Transposition x/y indices and parent-storm index for each output.
+    trimmask : np.ndarray, shape (maskheight, maskwidth)
+    maskheight, maskwidth : int
+    precat : np.ndarray, shape (nstorms, nt_pre, ny, nx)
+        Spin-up rainfall preceding each catalog storm.
+    ptime : np.ndarray of datetime64
+        Time of each catalog storm (used to match months for spin-up).
+    rainprop : GriddedRainProperties
+    rlzanglebin : np.ndarray of int, optional
+        Rotation-angle bin for each output (1-based).
+    delarray : list, optional
+        Delaunay triangulations per storm and angle bin (see main script).
+    spin : bool, optional
+        Prepend spin-up rainfall.
+    flexspin : bool, optional
+        If True, spin-up rainfall is taken from a random location in the
+        domain rather than from the transposition location.
+    samptype : str, optional
+        'uniform' or 'kernel'; controls how flexspin locations are drawn.
+    cumkernel : np.ndarray, optional
+        Cumulative transposition probability map (for kernel sampling).
+    rotation : bool, optional
+    domaintype : str, optional
+        'rectangular' or 'irregular'.
+
+    Returns
+    -------
+    outrain : np.ndarray of float32, shape (nout, nt_pre+nt, maskheight, maskwidth)
+
+    Notes
+    -----
+    LEGACY: from the pre-August-2023 scenario writer. It calls ``numbakernel``
+    with two arguments (it needs five) and uses ``np.random.random_integers``,
+    which was removed from recent NumPy. Status: not currently called.
+    """
     catyears=ptime.astype('datetime64[Y]').astype(int)+1970
     ptime=ptime.astype('datetime64[M]').astype(int)-(catyears-1970)*12+1
     nyrs=np.int16(rlzx.shape[0])
@@ -1087,6 +1475,7 @@ def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,maskheight,maskwidth,prec
 ##==============================================================================
 ## SAME AS ABOVE, BUT A BIT MORE DYNAMIC IN TERMS OF SPINUP
 ##==============================================================================    
+# LEGACY (commented out, not used): older SSTspin_write_v2 with intensity-based rescaling (never tested). Candidate for removal.
 #def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,xmin,xmax,ymin,ymax,maskheight,maskwidth,precat,ptime,rainprop,rlzanglebin=None,delarray=None,spin=False,flexspin=True,samptype='uniform',cumkernel=None,rotation=False,domaintype='rectangular',intense_data=False):
 #    catyears=ptime.astype('datetime64[Y]').astype(int)+1970
 #    ptime=ptime.astype('datetime64[M]').astype(int)-(catyears-1970)*12+1
@@ -1172,6 +1561,7 @@ def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,maskheight,maskwidth,prec
 # THIS FINDS THE TRANSPOSITION LOCATION FOR EACH REALIZATION IF YOU ARE USING THE KERNEL-BASED RESAMPLER
 # IF I CONFIGURE THE SCRIPT SO THE USER CAN PROVIDE A CUSTOM RESAMPLING SCHEME, THIS WOULD PROBABLY WORK FOR THAT AS WELL
 #==============================================================================    
+# LEGACY (commented out, not used): weavekernel; relied on scipy.weave, which no longer exists. Candidate for removal.
 #def weavekernel(rndloc,cumkernel):
 #    nlocs=len(rndloc)
 #    nrows=cumkernel.shape[0]
@@ -1207,6 +1597,26 @@ def SSTspin_write_v2(catrain,rlzx,rlzy,rlzstm,trimmask,maskheight,maskwidth,prec
     
     
 def pykernel(rndloc,cumkernel):
+    """
+    Pure-Python inverse-CDF sampling of transposition locations from a 2D
+    cumulative probability map. See ``numbakernel`` for the algorithm.
+
+    Parameters
+    ----------
+    rndloc : np.ndarray of float, shape (n,)
+        Uniform(0, 1) random numbers.
+    cumkernel : np.ndarray, shape (nrows, ncols)
+        Cumulative probability map (row-major cumsum; cells outside the domain
+        are set to a large value such as 100).
+
+    Returns
+    -------
+    tempx, tempy : np.ndarray of int32, shape (n,)
+
+    Notes
+    -----
+    Status: not currently called.
+    """
     nlocs=len(rndloc)
     ncols=cumkernel.shape[1]
     tempx=np.empty((len(rndloc)),dtype="int32")
@@ -1225,6 +1635,32 @@ def pykernel(rndloc,cumkernel):
 
 @jit 
 def numbakernel(rndloc,cumkernel,tempx,tempy,ncols):
+    """
+    Inverse-CDF sampling of transposition locations from a 2D cumulative
+    probability map (Numba).
+
+    ``cumkernel`` is flattened (row-major) and a 0 is prepended, so
+    ``flatkern[k]`` is the cumulative probability *before* cell k. For each
+    random number r, the cell chosen is the one whose cumulative interval
+    ``(flatkern[k], flatkern[k+1]]`` contains r, i.e. the largest k with
+    ``flatkern[k] <= r``. That flat index is converted back to (y, x).
+
+    Parameters
+    ----------
+    rndloc : np.ndarray of float, shape (n,)
+        Uniform(0, 1) random numbers.
+    cumkernel : np.ndarray, shape (nrows, ncols)
+        Cumulative probability map.
+    tempx, tempy : np.ndarray of int32, shape (n,)
+        Output arrays (filled in place).
+    ncols : int
+        Number of columns in ``cumkernel``.
+
+    Returns
+    -------
+    tempx, tempy : np.ndarray of int32
+        Column and row index of each sampled location.
+    """
     nlocs=len(rndloc)
     #ncols=xdim
     flatkern=np.append(0.,cumkernel.flatten())
@@ -1242,6 +1678,28 @@ def numbakernel(rndloc,cumkernel,tempx,tempy,ncols):
 
 @jit 
 def numbakernel_fast(rndloc,cumkernel,tempx,tempy,ncols):
+    """
+    Wrapper around ``kernelloop`` for inverse-CDF sampling of transposition
+    locations; see ``numbakernel`` for the algorithm.
+
+    Parameters
+    ----------
+    rndloc : np.ndarray of float, shape (n,)
+    cumkernel : np.ndarray, shape (nrows, ncols)
+    tempx, tempy : np.ndarray of int32, shape (n,)
+        Output arrays.
+    ncols : int
+        Ignored; recomputed from ``cumkernel.shape[1]``.
+
+    Returns
+    -------
+    tempx, tempy : np.ndarray of int32
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py for TRANSPOSITION = "nonuniform" (that path
+    currently exits before reaching this call).
+    """
     nlocs=int32(len(rndloc))
     ncols=int32(cumkernel.shape[1])
     flatkern=np.append(0.,cumkernel.flatten()) 
@@ -1250,6 +1708,23 @@ def numbakernel_fast(rndloc,cumkernel,tempx,tempy,ncols):
 #@jit(nopython=True,fastmath=True,parallel=True)
 @jit(nopython=True,fastmath=True)
 def kernelloop(nlocs,rndloc,flatkern,ncols,tempx,tempy):
+    """
+    Numba inner loop for ``numbakernel_fast``; see ``numbakernel``.
+
+    Parameters
+    ----------
+    nlocs : int
+    rndloc : np.ndarray of float, shape (nlocs,)
+    flatkern : np.ndarray
+        Flattened cumulative kernel with a leading 0.
+    ncols : int
+    tempx, tempy : np.ndarray of int32
+        Output arrays (filled in place).
+
+    Returns
+    -------
+    tempx, tempy : np.ndarray of int32
+    """
     for i in prange(nlocs):
         diff=rndloc[i]-flatkern
         diff[np.less(diff,0.)]=10.
@@ -1271,6 +1746,39 @@ def kernelloop(nlocs,rndloc,flatkern,ncols,tempx,tempy):
 
 
 def findsubbox(inarea,variables,fname):
+    """
+    Find the grid subset of a NetCDF rainfall file that covers the
+    transposition domain.
+
+    Longitudes above 180 are converted to the -180..180 convention before
+    selecting.
+
+    Parameters
+    ----------
+    inarea : array-like, [lon_min, lon_max, lat_min, lat_max]
+        Transposition domain bounds.
+    variables : dict
+        Names of the rainfall, latitude and longitude variables, in that order
+        (the VARIABLES entry of the parameter file).
+    fname : str
+        Path to one input rainfall NetCDF file.
+
+    Returns
+    -------
+    outextent : np.ndarray, [lon_first, lon_last, lat_first, lat_last]
+        Coordinates of the first and last selected grid points.
+    outdim : np.ndarray of int, [nlat, nlon]
+        Size of the subset.
+    lat, lon : xarray.DataArray
+        Latitudes and longitudes of the subset.
+    indices : np.ndarray of int, [lat_i0, lat_i1, lon_i0, lon_i1]
+        Inclusive index bounds of the subset in the full file.
+
+    Notes
+    -----
+    The ``slice(latmin, latmax)`` selection assumes latitude is stored in
+    ascending order. Status: used by RainyDay_Py3.py.
+    """
     outextent = np.empty([4])
     outdim=np.empty([2], dtype= 'int')
     infile=xr.open_dataset(fname)
@@ -1303,6 +1811,26 @@ def findsubbox(inarea,variables,fname):
 # THIS HELPS TO KEEP ARRAY SIZES SMALL
 #==============================================================================
 def creategrids(rainprop):
+    """
+    Build boolean masks that select the user-defined subgrid from the global
+    grid of the input dataset.
+
+    Parameters
+    ----------
+    rainprop : GriddedRainProperties
+        Uses ``dimensions`` and ``subind``.
+
+    Returns
+    -------
+    outgrid : np.ndarray of bool, shape (ny_global, nx_global)
+        True inside the subgrid.
+    subindx, subindy : np.ndarray of bool
+        1D selectors for columns and rows.
+
+    Notes
+    -----
+    LEGACY. Status: not currently called.
+    """
     globrangex=np.arange(0,rainprop.dimensions[1],1)
     globrangey=np.arange(0,rainprop.dimensions[0],1)
     subrangex=np.arange(rainprop.subind[0],rainprop.subind[1]+1,1)
@@ -1320,6 +1848,45 @@ def creategrids(rainprop):
 
 # edited 9/14/2026 by BLF... have repurposed code from SLAM to remove NAN precip from shapefile masks. 
 def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False,precipfile=None,variables=None):            
+    """
+    Rasterize a polygon shapefile onto the rainfall grid to create a watershed
+    or transposition-domain mask.
+
+    Edited Sept 2026 by BLF (adapted from SLAM) so that cells where the input
+    precipitation data are invalid are set to 0.
+
+    Parameters
+    ----------
+    shpname : str
+        Path to a polygon shapefile in geographic WGS84 coordinates.
+    rainprop : GriddedRainProperties
+        Uses ``subextent``, ``subdimensions`` and ``spatialres``.
+    masktype : {'simple', 'fraction'}, optional
+        'simple': 1 for any cell touched by the polygon, 0 otherwise.
+        'fraction': approximate fraction (0-1) of each cell covered by the
+        polygon, found by rasterizing on a grid 10x finer and block-averaging.
+    dissolve : bool, optional
+        Unused.
+    ngenfile : bool, optional
+        Placeholder for NextGen hydrofabric support (not implemented; exits).
+    precipfile : str, optional
+        Rainfall NetCDF file. If given (with ``variables``), cells whose
+        rainfall is negative or non-finite at any time step are set to 0.
+    variables : dict, optional
+        Rainfall/latitude/longitude variable names.
+
+    Returns
+    -------
+    np.ndarray of float32, shape (nlat, nlon)
+        Mask in north-up orientation. The caller flips it (``np.flipud``) to
+        match the south-up orientation of the rainfall arrays.
+
+    Notes
+    -----
+    All polygons in the shapefile are used. Inside the function ``xdim`` holds
+    the number of rows and ``ydim`` the number of columns (the names are
+    swapped relative to their meaning). Status: used by RainyDay_Py3.py.
+    """
     bndcoords=np.array(rainprop.subextent)
     
     xdim=rainprop.subdimensions[0]  
@@ -1410,6 +1977,34 @@ def rastermask(shpname,rainprop,masktype='simple',dissolve=True,ngenfile=False,p
 #==============================================================================
 def writerealization(scenarioname,rlz,nrealizations,writename,outrain,writemax,writestorm,writeperiod,writex,writey,writetimes,latrange,lonrange,whichorigstorm):
     # SAVE outrain AS NETCDF FILE
+    """
+    Write one realization of annual-maximum SST scenarios to a single NetCDF
+    file (one storm per synthetic year).
+
+    Parameters
+    ----------
+    scenarioname : str
+    rlz : int
+        Realization index (0-based).
+    nrealizations : int
+    writename : str
+        Output file path.
+    outrain : np.ndarray, shape (nyears, nt, nlat, nlon)
+        Rainfall rates (mm/hr). NaNs are replaced with -9999 in place.
+    writemax : np.ndarray, shape (nyears,)
+        Basin-average storm totals (mm).
+    writestorm, writeperiod, writex, writey : np.ndarray, shape (nyears,)
+        Storm rank, return period, and transposition indices.
+    writetimes : np.ndarray, shape (nyears, nt)
+    latrange, lonrange : np.ndarray
+    whichorigstorm : np.ndarray, shape (nyears,)
+        Parent storm number from the catalog.
+
+    Notes
+    -----
+    LEGACY: replaced in Aug 2023 by one-file-per-scenario output
+    (``writescenariofile``). Status: not currently called.
+    """
     dataset=Dataset(writename, 'w', format='NETCDF4')
 
     # create dimensions
@@ -1487,6 +2082,26 @@ def writerealization(scenarioname,rlz,nrealizations,writename,outrain,writemax,w
 def writerealization_nperyear(scenarioname,writename,rlz,nperyear,nrealizations,outrain_large,outtime_large,subrangelat,subrangelon,rlz_order,nsimulations):
     # SAVE outrain AS NETCDF FILE
     #filename=writename+'_SSTrealization'+str(rlz+1)+'_Top'+str(nperyear)+'.nc'
+    """
+    Write one realization of scenarios with several (``nperyear``) storms per
+    synthetic year to a NetCDF file.
+
+    Parameters
+    ----------
+    scenarioname : str
+        Used as the output path (``writename`` is not used for the path).
+    writename : str
+    rlz, nperyear, nrealizations, nsimulations : int
+    outrain_large : np.ndarray, shape (nsimulations, nperyear, nt, nlat, nlon)
+    outtime_large : np.ndarray, shape (nsimulations, nperyear, nt)
+    subrangelat, subrangelon : np.ndarray
+    rlz_order : np.ndarray
+        Ranking of storms within each year (negative for no storm).
+
+    Notes
+    -----
+    LEGACY (adapted from Guo Yu's version). Status: not currently called.
+    """
     dataset=Dataset(scenarioname, 'w', format='NETCDF4')
 
     # create dimensions
@@ -1540,6 +2155,28 @@ def writerealization_nperyear(scenarioname,writename,rlz,nperyear,nrealizations,
 #==============================================================================
 def writemaximized(scenarioname,writename,outrain,writemax,write_ts,writex,writey,writetimes,latrange,lonrange):
     # SAVE outrain AS NETCDF FILE
+    """
+    Write a single "maximized" storm (e.g., the largest transposed storm) to a
+    NetCDF file.
+
+    Parameters
+    ----------
+    scenarioname : str
+    writename : str
+        Output path.
+    outrain : np.ndarray, shape (nt, nlat, nlon)
+    writemax : float
+        Basin-average storm total (mm).
+    write_ts : unused
+    writex, writey : int
+        Transposition indices.
+    writetimes : np.ndarray, shape (nt,)
+    latrange, lonrange : np.ndarray
+
+    Notes
+    -----
+    Status: not currently called.
+    """
     dataset=Dataset(writename, 'w', format='NETCDF4')
 
     # create dimensions
@@ -1604,6 +2241,7 @@ def writemaximized(scenarioname,writename,outrain,writemax,write_ts,writex,write
 # READ RAINFALL FILE FROM NETCDF (ONLY FOR RAINYDAY NETCDF-FORMATTED DAILY FILES!
 #==============================================================================
 
+# LEGACY (commented out, not used): previous readnetcdf using an 'index' argument; superseded by readnetcdf below. Candidate for removal.
 # def readnetcdf(rfile,variables,index = None,dropvars=False):
 #     """
 #     Used to trim the dataset with defined inbounds or transposition domain
@@ -1650,6 +2288,26 @@ def writemaximized(scenarioname,writename,outrain,writemax,write_ts,writex,write
 #     else:
 #         return np.array(outrain),outtime,np.array(outlatitude),np.array(outlongitude)
 def find_indices(rfile,inarea,variables):
+    """
+    Return the inclusive index bounds of a lat/lon box within a NetCDF file.
+
+    Parameters
+    ----------
+    rfile : str
+        Path to a rainfall NetCDF file.
+    inarea : array-like, [lon_min, lon_max, lat_min, lat_max]
+    variables : dict
+        Rainfall/latitude/longitude variable names.
+
+    Returns
+    -------
+    list of int, [lat_i0, lat_i1, lon_i0, lon_i1]
+        Used with ``readnetcdf(..., idxes=...)`` to read only the subset.
+
+    Notes
+    -----
+    The dataset is not explicitly closed. Status: used by RainyDay_Py3.py.
+    """
     ds = Dataset(rfile, 'r')
     rain_name, lat_name, lon_name = variables.values()
 
@@ -1669,22 +2327,48 @@ def find_indices(rfile,inarea,variables):
 
 def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=False,time_units=False,):
     """
-    Used to trim the dataset with defined inbounds or transposition domain
+    Read rainfall and time from one input NetCDF file (typically one day).
+
+    Two modes:
+
+    * ``idxes`` given: read only the index subset
+      ``[:, lat_i0:lat_i1+1, lon_i0:lon_i1+1]`` with netCDF4 (fast path used in
+      the catalog-creation loop). Times are decoded with ``calendar``.
+    * ``idxes`` not given: read the whole file with xarray (dropping
+      ``dropvars``) and convert longitudes above 180 to -180..180.
 
     Parameters
     ----------
-    rfile : Dataset file path ('.nc' file)
-        This is the path to the dataset
-    variables : TYPE
-        DESCRIPTION.
-    inbounds : TYPE, optional
-        DESCRIPTION. The default is False.
+    rfile : str
+        Path to the NetCDF file.
+    variables : dict
+        Rainfall, latitude and longitude variable names, in that order.
+    idxes : list of int, optional
+        [lat_i0, lat_i1, lon_i0, lon_i1] from ``find_indices``.
+    dropvars : list of str, optional
+        Variables to skip when reading with xarray.
+    setup : bool, optional
+        If True, also return latitude, longitude and the raw netCDF time
+        variable (only valid when ``idxes`` is not given).
+    calendar : str, optional
+        Calendar used to decode times in the ``idxes`` path.
+    time_units : optional
+        Unused (kept for a commented-out Dask path).
 
     Returns
     -------
-    TYPE
-        DESCRIPTION.
+    outrain : array, shape (nt, nlat, nlon)
+        Rainfall rate (mm/hr). A masked array in the ``idxes`` path, an xarray
+        DataArray otherwise (or ndarray when ``setup``).
+    outtime : np.ndarray of datetime64[m], shape (nt,)
+    outlatitude, outlongitude : np.ndarray
+        Only when ``setup`` is True.
+    nctime : netCDF4.Variable
+        Only when ``setup`` is True (used to read units and calendar).
 
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
     """
     # infile = xr.open_dataset(rfile, drop_variables=dropvars,chunks='auto').load() if dropvars else xr.open_dataset(rfile).load()  # added DBW 07282023 to avoid reading in unnecessary variables
     rain_name,lat_name,lon_name = variables.values()
@@ -1742,20 +2426,42 @@ def readnetcdf(rfile,variables,idxes=False,dropvars=False,setup=False,calendar=F
 
 def readcatalog(rfile) :
     """
-    Returns the properties of the storm including spatial range, storm center,
-    storm depth, storm time by reading the already created storm catalogs.
+    Read one storm file from a RainyDay storm catalog.
+
+    Since Aug 2023 each storm is stored in its own NetCDF file, but every file
+    also carries the catalog-wide arrays (storm totals, locations, and times
+    for all storms), so reading any one file (usually the last) recovers the
+    full catalog summary.
 
     Parameters
     ----------
-    rfile : string
-        This takes in the path of the source file.
+    rfile : str
+        Path to a storm catalog NetCDF file.
 
     Returns
     -------
-    arrays
-        returns all the properties of a storm including storm rain array, storm time, storm depth, storm center and the extent of the transpositio domain.
-        The all storms cattime, catmax, catx and caty are also returned.
+    outrain : xarray.DataArray, shape (nt, nlat, nlon)
+        Rainfall rate (mm/hr) for this storm; -9999 marks missing data.
+    stormtime : np.ndarray of datetime64[m], shape (nt,)
+        Times of this storm.
+    outlatitude, outlongitude : xarray.DataArray
+    outlocx, outlocy : np.ndarray of int, shape (nstorms,)
+        Upper-left x/y index of the watershed rectangle at each storm's
+        maximum, for all storms in the catalog.
+    outmax : np.ndarray, shape (nstorms,)
+        Basin-average storm total (mm) for all storms.
+    outmask : xarray.DataArray, shape (nlat, nlon)
+        Watershed mask (``catmask``).
+    domainmask : np.ndarray, shape (nlat, nlon)
+        Transposition domain mask.
+    cattime : np.ndarray of datetime64[m], shape (nstorms, nt)
+        Times of all storms.
+    timeresolution : int
+        Temporal resolution in minutes (only returned if stored in the file).
 
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
     """
     # infile=xr.open_dataset(rfile, engine='h5netcdf')
     infile=xr.open_dataset(rfile)
@@ -1784,19 +2490,27 @@ def readcatalog(rfile) :
 
 def check_time(datetime_obj):
     """
-    
+    Check whether a timestamp falls at 00:00 or 12:00.
+
+    Used when writing the storm catalog to decide which daily input file a
+    given time step belongs to. If the first time step of an input file is at
+    00:00 (period-beginning convention), a time belongs to the file for its own
+    date; otherwise (period-ending convention, first step e.g. 01:00), the
+    00:00 step belongs to the previous day's file.
 
     Parameters
     ----------
-    datetime_obj : numpy datetime object
+    datetime_obj : numpy.datetime64
         Datetime object to check the time component of the object
 
     Returns
     -------
-    boolean
-        returns True if the datetime object is either '12:00:00' or '00:00:00' 
-        else false
+    bool
+        True if the time part is '00:00(:00)' or '12:00(:00)', else False.
 
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
     """
     time_str = str(datetime_obj).split('T')[1][:8]  # Extract the time part
     return time_str == '00:00' or time_str == '12:00:00' or time_str == '00:00:00' or time_str =='12:00'
@@ -1809,7 +2523,45 @@ def check_time(datetime_obj):
 #RainyDay.writecatalog(scenarioname,catrain,catmax,catx,caty,cattime,latrange,lonrange,catalogname,nstorms,catmask,parameterfile,domainmask,timeresolution=rainprop.timeres)   
 def writecatalog(scenarioname, catrain, catmax, catx, caty, cattime, latrange, lonrange, catalogname, gridmask,
                  parameterfile, dmask, nstorms, duration,storm_num,timeresolution=False):
+    """
+    Write one storm of the storm catalog to a NetCDF file.
 
+    Each file contains the rainfall for that storm plus catalog-wide summary
+    arrays (storm totals, locations, and times for all storms), the watershed
+    and domain masks, the temporal resolution, and the full contents of the
+    JSON parameter file in the ``description`` attribute.
+
+    Parameters
+    ----------
+    scenarioname : str
+    catrain : np.ndarray, shape (nt, nlat, nlon)
+        Rainfall rate for this storm (NaNs are set to -9999 in place).
+    catmax : np.ndarray, shape (nstorms,)
+        Basin-average storm totals (mm).
+    catx, caty : np.ndarray of int, shape (nstorms,)
+        Upper-left indices of the watershed rectangle at each storm maximum.
+    cattime : np.ndarray of datetime64, shape (nstorms, nt)
+    latrange, lonrange : xarray.DataArray
+    catalogname : str
+        Output file path.
+    gridmask : np.ndarray, shape (nlat, nlon)
+        Watershed mask.
+    parameterfile : str
+        Path to the JSON parameter file.
+    dmask : np.ndarray, shape (nlat, nlon)
+        Transposition domain mask.
+    nstorms : int
+    duration : float
+        Unused.
+    storm_num : int
+        0-based index of this storm (selects its row of ``cattime``).
+    timeresolution : int, optional
+        Temporal resolution in minutes.
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
+    """
     with open(parameterfile,'r') as f:
         params = json.loads(f.read())
     # Variable Attributes (time since 1970-01-01 00:00:00.0 in numpys)
@@ -1861,6 +2613,22 @@ def writecatalog(scenarioname, catrain, catmax, catx, caty, cattime, latrange, l
 
 def writeintensityfile(scenarioname,intenserain,filename,latrange,lonrange,intensetime):
     # SAVE outrain AS NETCDF FILE
+    """
+    Write a gridded "storm intensity" file (top storm totals at each cell).
+
+    Parameters
+    ----------
+    scenarioname : str
+    intenserain : np.ndarray, shape (nstorms, nlat, nlon)
+        Storm totals (mm); NaNs set to -9999 in place.
+    filename : str
+    latrange, lonrange : np.ndarray
+    intensetime : np.ndarray, shape (nstorms, nlat, nlon)
+
+    Notes
+    -----
+    LEGACY (paired with ``readintensityfile``). Status: not currently called.
+    """
     dataset=Dataset(filename, 'w', format='NETCDF4')
     
     # create dimensions
@@ -1902,6 +2670,25 @@ def writeintensityfile(scenarioname,intenserain,filename,latrange,lonrange,inten
     
     
 def readintensityfile(rfile,inbounds=False):
+    """
+    Read a gridded storm-intensity file for stochastic/deterministic rescaling.
+
+    Parameters
+    ----------
+    rfile : str
+    inbounds : array-like or False, optional
+        Index bounds [x0, x1, y1, y0] to subset.
+
+    Returns
+    -------
+    outrain, outtime, outlat, outlon : np.ndarray
+
+    Notes
+    -----
+    DISABLED: the function exits immediately pending CF-convention fixes (the
+    latitude orientation). Because of this, NORMALIZEDSST = "stochastic" or
+    "deterministic" cannot currently run.
+    """
     infile=Dataset(rfile,'r')
     sys.exit("need to make sure that all CF-related file formatting issues are solved. This main revolves around flipping the rainfall vertically, and perhaps the latitude array as well.")
     if np.any(inbounds!=False):
@@ -1922,19 +2709,32 @@ def readintensityfile(rfile,inbounds=False):
 # =============================================================================
 def read_quantilefile(amfile, duration, return_period, mask=True):
     """
-    Reads the amfile and calculates the design values based on the specified duration and return period using the empirical probability distribution.
-    Uses np.quantile to directly compute the quantile
+    Read a gridded annual-maximum file and compute a design precipitation field
+    (empirical quantile) for normalized SST.
 
-    Parameters:
-    amfile (str): Path to the input file
-    duration (int): Specified duration (6, 12, 24, 48, 72, 96)
-    return_period (int): Specified return period (e.g., 2, 5, 10, 25, 50, 100)
-    inbounds (tuple or bool): Optional, specifies the region boundaries (lon_min, lon_max, lat_min, lat_max)
+    Added by Lei Yan (Feb 2025).
 
-    Returns:
-    design_values (np.array): Array of design values
-    lat (np.array): Array of latitudes
-    lon (np.array): Array of longitudes
+    Parameters
+    ----------
+    amfile : str
+        NetCDF file with variable ``precrate`` (annual maxima) and dimensions
+        ``duration``, ``latitude``, ``longitude``.
+    duration : int
+        Duration (hours) to select; must exist in the file.
+    return_period : float
+        Return period (years). The quantile used is ``1 - 1/return_period``.
+    mask : bool, optional
+        If True, crop to ``inbounds`` (see Notes).
+
+    Returns
+    -------
+    design_values : np.ndarray, shape (nlat, nlon)
+    lat, lon : np.ndarray
+
+    Notes
+    -----
+    The ``mask=True`` branch refers to ``inbounds``, which is not defined in
+    this function, so only ``mask=False`` works. Status: used by RainyDay_Py3.py.
     """
     ds = xr.open_dataset(amfile)
 
@@ -1967,6 +2767,14 @@ def read_quantilefile(amfile, duration, return_period, mask=True):
     return design_values, lat, lon
 
 def readmeanfile(rfile,inbounds=False):
+    """
+    Read a gridded mean storm-total file.
+
+    Notes
+    -----
+    DISABLED: exits immediately pending CF-convention fixes.
+    Status: not currently called.
+    """
     infile=Dataset(rfile,'r')
     sys.exit("need to make sure that all CF-related file formatting issues are solved. This main revolves around flipping the rainfall vertically, and perhaps the latitude array as well.")
  
@@ -1984,6 +2792,14 @@ def readmeanfile(rfile,inbounds=False):
 
 def writedomain(domain,mainpath,latrange,lonrange,parameterfile):
     # SAVE outrain AS NETCDF FILE
+    """
+    Write a transposition domain mask to NetCDF.
+
+    Notes
+    -----
+    DISABLED: exits immediately pending CF-convention fixes.
+    Status: not currently called.
+    """
     sys.exit("need to make sure that all CF-related file formatting issues are solved. This main revolves around flipping the rainfall vertically, and perhaps the latitude array as well.")
  
     dataset=Dataset(mainpath, 'w', format='NETCDF4')
@@ -2042,6 +2858,7 @@ def extract_storm_number(file_path, catalogname):
     if match:
         return int(match.group(1))
     return 0
+# LEGACY (commented out, not used): previous extract_storm_number filename pattern. Candidate for removal.
 # def extract_storm_number(file_path, catalogname):
 #     """
     
@@ -2089,6 +2906,7 @@ def extract_date(file_path, catalogname):
     return None
 
 
+# LEGACY (commented out, not used): previous extract_date filename pattern. Candidate for removal.
 # def extract_date(file_path, pattern):
 #     """
     
@@ -2116,6 +2934,20 @@ def extract_date(file_path, catalogname):
 # this was provided by ChatGPT
 # =============================================================================
 def delete_files_in_directory(directory_path):
+    """
+    Recursively delete all files under a directory, leaving the (now empty)
+    subdirectories in place. Used to clear old scenario files before writing
+    new ones.
+
+    Parameters
+    ----------
+    directory_path : str
+
+    Notes
+    -----
+    Errors deleting individual files are printed, not raised.
+    Status: used by RainyDay_Py3.py.
+    """
     for item in os.listdir(directory_path):
         item_path = os.path.join(directory_path, item)
         if os.path.isfile(item_path):
@@ -2135,6 +2967,45 @@ def delete_files_in_directory(directory_path):
 def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstorm,tyear,trealization,maskheight,maskwidth,subrangelat,subrangelon,scenarioname,mask,origstormnumber,scenario_returnperiod):
     # the following line extracts only the transposed rainfall within the area of interest
     #transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
+    """
+    Write one transposed storm scenario to its own NetCDF file.
+
+    The parent storm's rainfall is cropped to the watershed rectangle at the
+    transposition location and written with its times, the transposition
+    indices, the scenario return period and the parent storm number.
+
+    Added by DBW (Aug 2023); returnperiod and original_stormnumber added by
+    Ashar (July 2026).
+
+    Parameters
+    ----------
+    catrain : np.ndarray, shape (nt, nlat, nlon)
+        Parent storm rainfall rate (mm/hr) over the full domain.
+    raintime : np.ndarray of datetime64, shape (nt,)
+    rainlocx, rainlocy : np.ndarray of int, shape (1,)
+        Upper-left x/y index of the transposed watershed rectangle.
+    name_scenariofile : str
+        Output file path.
+    tstorm, tyear, trealization : int
+        Parent storm index, synthetic-year index, and realization index (used
+        only in the description string).
+    maskheight, maskwidth : int
+    subrangelat, subrangelon : np.ndarray
+        Coordinates of the watershed rectangle at its original location.
+    scenarioname : str
+    mask : np.ndarray
+        Watershed mask. Currently unused: the multiplication by the mask is
+        commented out, so the whole rectangle is written.
+    origstormnumber : int
+        Parent storm number from the catalog (1-based, from the filename).
+    scenario_returnperiod : float
+        Return period of this scenario's year rank, or -9999 for the extra
+        storms when NPERYEAR > 1.
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
+    """
     transposedrain=catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)]
 
     description_string='RainyDay storm scenario file for original storm '+str(tstorm)+', year '+str(tyear)+', realization '+str(trealization)+', created from ' + scenarioname
@@ -2215,6 +3086,37 @@ def writescenariofile(catrain,raintime,rainlocx,rainlocy,name_scenariofile,tstor
 # modified by Ashar 07/12/2026: added returnperiod and original_stormnumber output variables
 # =============================================================================
 def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, name_scenariofile, tstorm, tyear, trealization, maskheight,maskwidth, subrangelat, subrangelon, scenarioname, mask, origstormnumber, scenario_returnperiod):
+    """
+    Write one normalized-SST scenario to its own NetCDF file.
+
+    Same as ``writescenariofile`` except that the cropped rainfall is
+    multiplied by the watershed mask and by the cell-by-cell rescaling
+    multiplier from ``SSTalt_normalized``.
+
+    Added by Lei Yan (Mar 2025); returnperiod and original_stormnumber added
+    by Ashar (July 2026).
+
+    Parameters
+    ----------
+    catrain : np.ndarray, shape (nt, nlat, nlon)
+    raintime : np.ndarray of datetime64, shape (nt,)
+    rainlocx, rainlocy : np.ndarray of int, shape (1,)
+    outmultiplier : np.ndarray, shape (1, maskheight, maskwidth)
+        Rescaling multiplier field for this scenario.
+    name_scenariofile : str
+    tstorm, tyear, trealization : int
+    maskheight, maskwidth : int
+    subrangelat, subrangelon : np.ndarray
+    scenarioname : str
+    mask : np.ndarray, shape (maskheight, maskwidth)
+        Binary watershed mask.
+    origstormnumber : int
+    scenario_returnperiod : float
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py (NORMALIZEDSST = "dimensionless").
+    """
     transposedrain=np.multiply(catrain[:,rainlocy[0] : (rainlocy[0]+maskheight), rainlocx[0] : (rainlocx[0]+maskwidth)],mask)
     rain_nsst = transposedrain * outmultiplier
 
@@ -2269,6 +3171,24 @@ def Normalized_SST_write(catrain, raintime, rainlocx, rainlocy, outmultiplier, n
 # http://stackoverflow.com/questions/10106901/elegant-find-sub-list-in-list 
 #============================================================================== 
 def subfinder(mylist, pattern):
+    """
+    Return the start indices of every occurrence of the sub-list ``pattern``
+    in ``mylist``.
+
+    Parameters
+    ----------
+    mylist : list
+    pattern : list
+
+    Returns
+    -------
+    list of int
+
+    Notes
+    -----
+    From http://stackoverflow.com/questions/10106901/elegant-find-sub-list-in-list
+    Status: not currently called.
+    """
     matches = []
     for i in range(len(mylist)):
         if mylist[i] == pattern[0] and mylist[i:i+len(pattern)] == pattern:
@@ -2281,6 +3201,27 @@ def subfinder(mylist, pattern):
 #==============================================================================
 
 def try_parsing_date(text):
+    """
+    Parse a date string using several common formats
+    ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y', '%Y%m%d').
+
+    Parameters
+    ----------
+    text : str
+
+    Returns
+    -------
+    datetime.datetime
+
+    Raises
+    ------
+    ValueError
+        If none of the formats match.
+
+    Notes
+    -----
+    Untested. Status: not currently called.
+    """
     for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y', '%Y%m%d'):
         try:
             return datetime.strptime(text, fmt)
@@ -2291,25 +3232,32 @@ def try_parsing_date(text):
     
 def createfilelist(inpath, includeyears, excludemonths):
     """
-    
+    Build the sorted list of input rainfall files, keeping only the requested
+    years and dropping the excluded months.
+
+    The date of each file is read from its filename, which must contain a date
+    in YYYYMMDD, YYYY-MM-DD or YYYY/MM/DD form (the first match is used).
+    RainyDay expects one file per day.
 
     Parameters
     ----------
-    inpath : string
-        inpath takes in the file path for the rainfall data .nc files.
-    includeyears : list
-        includeyears are the years user want to include in the storm catalog analysis
-        Default: False
-    excludemonths : list
-        exludemonths are the list of months user want to exclude from the analysis
-        Default: none    
+    inpath : str
+        Glob pattern for the rainfall .nc files (RAINPATH).
+    includeyears : list of int or False
+        Years to include (INCLUDEYEARS). False means all years.
+    excludemonths : list of int
+        Months (1-12) to exclude (EXCLUDEMONTHS). Empty list for none.
+
     Returns
     -------
-    new_list : list
-        returns the list of files including mentioned years and excluding described months
+    new_list : list of str
+        Files to use, sorted by name.
     nyears : int
-        returns the lenght of years inlcuded in the analysis.
+        Number of distinct years among the kept files.
 
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
     """
     flist = sorted(glob.glob(inpath))
     new_list = [] ; years = set()
@@ -2338,6 +3286,50 @@ def createfilelist(inpath, includeyears, excludemonths):
 # Get things set up
 #==============================================================================
 def rainprop_setup(infile,rainprop,variables,catalog=False):
+    """
+    Inspect one input rainfall file (or a storm catalog file) and derive the
+    grid and time properties RainyDay needs.
+
+    Checks performed (the program exits if any fail):
+
+    * latitude/longitude are 1D (regular lat/lon grid);
+    * x and y resolutions are equal (square cells);
+    * time steps are evenly spaced;
+    * for raw input, the file spans exactly one day;
+    * at most one negative (missing-data) value is present.
+
+    For raw input, it also works out which variables can be skipped
+    (``droplist``) so later reads are faster.
+
+    Parameters
+    ----------
+    infile : str
+        Path to one rainfall file (or catalog file if ``catalog`` is True).
+    rainprop : GriddedRainProperties
+        Not modified; kept for the call signature.
+    variables : dict
+        Rainfall/latitude/longitude variable names (keys 'latname' and
+        'longname' are expected for the coordinates).
+    catalog : bool, optional
+        True if ``infile`` is a storm catalog file.
+
+    Returns
+    -------
+    When ``catalog`` is False:
+        [xres, yres], [nlat, nlon], [lon_min, lon_max+xres, lat_min-yres, lat_max],
+        tempres (int, minutes), nodata, droplist, calendar, time_units
+    When ``catalog`` is True:
+        [xres, yres], [nlat, nlon], [lon_min, lon_max, lat_min, lat_max], tempres,
+        nodata, inrain, intime, inlatitude, inlongitude, catx, caty, catmax, domainmask
+
+    Notes
+    -----
+    The bounding box offsets (+xres on the east, -yres on the south) reflect
+    RainyDay's convention that grid coordinates mark the upper-left corner of
+    each cell. The ``catalog=True`` branch unpacks nine values from
+    ``readcatalog``, which returns ten or eleven, so that branch would fail.
+    Status: used by RainyDay_Py3.py (``catalog=False``).
+    """
     if catalog:
         inrain,intime,inlatitude,inlongitude,catx,caty,catmax,_,domainmask=readcatalog(infile)
     else:
@@ -2414,6 +3406,25 @@ def rainprop_setup(infile,rainprop,variables,catalog=False):
 #==============================================================================
 
 def readrealization(rfile):
+    """
+    Read a legacy realization NetCDF file written by ``writerealization``.
+
+    Handles both the old ('rainrate') and newer ('precrate', stored north-up
+    and flipped back here) variable names.
+
+    Parameters
+    ----------
+    rfile : str
+
+    Returns
+    -------
+    outrain, outtime, outlatitude, outlongitude, outlocx, outlocy, outmax,
+    outreturnperiod, outstormnumber, origstormnumber, timeunits
+
+    Notes
+    -----
+    LEGACY. Status: not currently called.
+    """
     infile=Dataset(rfile,'r')
     if 'rainrate' in infile.variables.keys():
         oldfile=True
@@ -2444,6 +3455,22 @@ def readrealization(rfile):
 # READ NPERYEAR REALIZATION
 #==============================================================================
 def readrealization_nperyear(rfile):
+    """
+    Read a legacy NPERYEAR realization NetCDF file written by
+    ``writerealization_nperyear``.
+
+    Parameters
+    ----------
+    rfile : str
+
+    Returns
+    -------
+    outrain, outtime, outlatitude, outlongitude, timeunits
+
+    Notes
+    -----
+    LEGACY. Status: not currently called.
+    """
     infile=Dataset(rfile,'r')
     if 'rainrate' in infile.variables.keys():
         oldfile=True
@@ -2476,6 +3503,26 @@ def readrealization_nperyear(rfile):
 #==============================================================================
 
 def readdomainfile(rfile,inbounds=False):
+    """
+    Read a pregenerated transposition domain mask from NetCDF (DOMAINFILE).
+
+    Parameters
+    ----------
+    rfile : str
+    inbounds : array-like or False, optional
+        Index bounds [x0, x1, y1, y0] to subset.
+
+    Returns
+    -------
+    outmask : np.ndarray
+        Domain mask (1 inside, 0 outside).
+    outlatitude, outlongitude : np.ndarray
+
+    Notes
+    -----
+    The DOMAINFILE option in RainyDay_Py3.py currently exits before calling
+    this ("capability isn't tested").
+    """
     infile=Dataset(rfile,'r')
     if np.any(inbounds!=False):
         outmask=np.array(infile.variables['domain'][inbounds[3]:inbounds[2]+1,inbounds[0]:inbounds[1]+1])
@@ -2494,6 +3541,28 @@ def readdomainfile(rfile,inbounds=False):
 #==============================================================================
     
 def rolling_sum(a, n):
+    """
+    Moving (rolling) sum over the first (time) axis, ignoring NaNs.
+
+    Used for the duration correction: when the storm catalog is longer than
+    the analysis DURATION, each output slice is the rainfall summed over one
+    DURATION-long window, so the most intense window can be selected.
+
+    Parameters
+    ----------
+    a : np.ndarray, shape (nt, ...)
+    n : int
+        Window length in time steps.
+
+    Returns
+    -------
+    np.ndarray, shape (nt-n+1, ...)
+        Element k is the sum of ``a[k:k+n]``.
+
+    Notes
+    -----
+    Status: used by RainyDay_Py3.py.
+    """
     ret = np.nancumsum(a, axis=0, dtype=float)
     ret[n:,:] = ret[n:,:] - ret[:-n,: ]
     return ret[n - 1:,: ]
@@ -2506,7 +3575,25 @@ def rolling_sum(a, n):
 def latlondistance(lat1,lon1,lat2,lon2):    
     #if len(lat1)>1 or len(lon1)>1:
     #    sys.exit('first 2 sets of points must be length 1');
+    """
+    Great-circle distance between points using the haversine formula.
 
+    Parameters
+    ----------
+    lat1, lon1 : float or np.ndarray
+        First point(s), in degrees.
+    lat2, lon2 : float or np.ndarray
+        Second point(s), in degrees.
+
+    Returns
+    -------
+    float or np.ndarray
+        Distance in meters (Earth radius 6,371 km).
+
+    Notes
+    -----
+    Status: not currently called.
+    """
     R=6371000;
     dlat=np.radians(lat2-lat1)
     dlon=np.radians(lon2-lon1)
@@ -2520,6 +3607,34 @@ def latlondistance(lat1,lon1,lat2,lon2):
         
 @jit(fastmath=True)
 def intenseloop(intenserain,tempintense,xlen_wmask,ylen_wmask,maskheight,maskwidth,trimmask,mnorm,domainmask):
+    """
+    Watershed-average a stack of gridded rainfall fields at every possible
+    transposition position (for stochastic/deterministic rescaling).
+
+    For each position (y, x) inside the domain with no missing data, computes
+    ``sum(intenserain[:, y:y+h, x:x+w] * trimmask) / mnorm`` for every field in
+    the stack, so the rescaling statistics are at the same (watershed) scale
+    as the transposed storms.
+
+    Parameters
+    ----------
+    intenserain : np.ndarray, shape (nstorms, ny, nx)
+        Log storm totals.
+    tempintense : np.ndarray, shape (nstorms, ylen_wmask, xlen_wmask)
+        Output array (filled in place).
+    xlen_wmask, ylen_wmask : int
+        Number of transposition positions in x and y.
+    maskheight, maskwidth : int
+    trimmask : np.ndarray
+    mnorm : float
+        Sum of ``trimmask`` (normalizing constant).
+    domainmask : np.ndarray
+
+    Returns
+    -------
+    tempintense : np.ndarray
+        NaN where the position is outside the domain or has missing data.
+    """
     for i in range(0,xlen_wmask*ylen_wmask):
         y=i//xlen_wmask
         x=i-y*xlen_wmask
@@ -2532,6 +3647,27 @@ def intenseloop(intenserain,tempintense,xlen_wmask,ylen_wmask,maskheight,maskwid
 
 @jit(nopython=True,fastmath=True)
 def intense_corrloop(intenserain,intensecorr,homerain,xlen_wmask,ylen_wmask,mnorm,domainmask):   
+    """
+    Correlation, at every transposition position, between the storm-total
+    series there and the series at the home (watershed) location.
+
+    Parameters
+    ----------
+    intenserain : np.ndarray, shape (nstorms, ylen_wmask, xlen_wmask)
+    intensecorr : np.ndarray, shape (ylen_wmask, xlen_wmask)
+        Output array (filled in place).
+    homerain : np.ndarray, shape (nstorms,)
+        Series at the home location.
+    xlen_wmask, ylen_wmask : int
+    mnorm : float
+        Unused.
+    domainmask : np.ndarray
+
+    Returns
+    -------
+    intensecorr : np.ndarray
+        Pearson correlation; NaN outside the domain or where data are missing.
+    """
     for i in range(0,xlen_wmask*ylen_wmask): 
         y=i//xlen_wmask
         x=i-y*xlen_wmask
@@ -2548,6 +3684,27 @@ def intense_corrloop(intenserain,intensecorr,homerain,xlen_wmask,ylen_wmask,mnor
 
 def read_arcascii(asciifile):
     # note: should add a detection ability for cell corners vs. centers: https://desktop.arcgis.com/en/arcmap/10.3/manage-data/raster-and-images/esri-ascii-raster-format.htm
+    """
+    Read an ESRI ASCII grid (.asc) file.
+
+    Parameters
+    ----------
+    asciifile : str
+
+    Returns
+    -------
+    asciigrid : np.ndarray of float32, shape (nrows, ncols)
+        Grid values with NODATA replaced by NaN.
+    ncols, nrows : int
+    xllcorner, yllcorner : float32
+        Lower-left corner coordinates.
+    cellsize : float32
+
+    Notes
+    -----
+    Assumes the standard 6-line header in the usual order and corner (not
+    center) registration. Status: not currently called.
+    """
     temp=linecache.getline(asciifile, 1)
     temp=linecache.getline(asciifile, 2)
     xllcorner=linecache.getline(asciifile, 3)
@@ -2580,17 +3737,23 @@ def read_arcascii(asciifile):
 #==============================================================================
 def find_unique_elements(list1, list2):
     """
-    Used to return only the elements of list1 that are not present in list2
+    Return the elements of ``list1`` that are not in ``list2``.
+
+    Used to build the ``drop_variables`` list for xarray so that only the
+    rainfall variable (and coordinates) are read from each input file.
 
     Parameters
     ----------
-    list1 : target list of values to be reduced according to list2
-    variables : list of values used to identify the values to keep in list1
+    list1 : iterable
+        Target list of values to be reduced according to list2 (e.g. all
+        variable names in a file).
+    list2 : iterable
+        Values to keep (e.g. the rainfall variable name).
 
     Returns
     -------
-    list with only the values in list1 that were not present in list2
-
+    list
+        The values in list1 that were not present in list2.
     """
     unique_elements_in_list1 = [x for x in list1 if x not in list2]
     #unique_elements_in_list2 = [x for x in list2 if x not in list1]
@@ -2601,6 +3764,20 @@ def find_unique_elements(list1, list2):
 # 
 #==============================================================================
 def is_monotonic(arr):
+    """
+    Check whether a 1D array is monotonically non-decreasing or non-increasing.
+
+    Used to decide whether a SEASONALSAMPLING file holds a CDF (monotonic) or
+    a PMF.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+
+    Returns
+    -------
+    bool
+    """
     return np.all(np.diff(arr) >= 0) or np.all(np.diff(arr) <= 0)
 
 
@@ -2609,6 +3786,19 @@ def is_monotonic(arr):
 #==============================================================================
 def day_of_year_to_datetime(year, day_of_year):
     # Create a datetime for the first day of the given year
+    """
+    Convert a year and day-of-year to a numpy datetime64 date.
+
+    Parameters
+    ----------
+    year : int
+    day_of_year : int
+        1-based (1 = January 1).
+
+    Returns
+    -------
+    numpy.datetime64 (day precision)
+    """
     start_of_year = np.datetime64(str(year), 'Y')
 
     # Add the number of days to get to the desired day of the year
@@ -2621,6 +3811,27 @@ def day_of_year_to_datetime(year, day_of_year):
 #==============================================================================
 def replace_year(dt, new_year):
     # Extract the time part from the datetime
+    """
+    Return the same month/day/time as ``dt`` but in ``new_year``.
+
+    Used for seasonal sampling: storm dates are mapped onto a common reference
+    year (1776/1777) so they can be compared by day of year.
+
+    Parameters
+    ----------
+    dt : numpy.datetime64
+    new_year : int
+
+    Returns
+    -------
+    numpy.datetime64
+
+    Notes
+    -----
+    Implemented by adding the elapsed time since January 1 to January 1 of the
+    new year, so leap-year dates after Feb 28 shift by one day when the target
+    year is not a leap year (and vice versa).
+    """
     time_part = dt - np.datetime64(dt, 'Y')
 
     # Get the current year of the datetime
