@@ -48,7 +48,7 @@ import matplotlib.patches as patches
 #from numba import njit, prange
 numbacheck=True
 import pandas as pd
-from scipy.stats import skewnorm
+from scipy.stats import gumbel_r, skewnorm
 from shapely.affinity import translate
 
 # plotting stuff, really only needed for diagnostic plots
