@@ -200,17 +200,10 @@ else:
 #             raise
 #         pass
 
-try:
-    tempscaling=cardinfo["tempscaling"]
-    if tempscaling.lower()=='true':
-        tempscaling=True
-    elif tempscaling.lower()=='false':
-        tempscaling=False
-    else:
-        sys.exit("tempscaling must be either 'true' or 'false'!")
-except Exception:
-    tempscaling=False
-    sys.exit("You didn't specify tempscaling, which is a required field!, defaulting to 'false'")
+# Added by Ashar on 2026-11-06: removed the "tempscaling" card; temperature scaling is only turned on by "ENHANCEDSST":"tempscaling". Stop on the old card so a run can't silently go unscaled.
+if "tempscaling" in cardinfo:
+    sys.exit("The 'tempscaling' card has been removed! Delete it from your parameter file and use \"ENHANCEDSST\":\"tempscaling\" to turn on temperature scaling.")
+tempscaling=False
 try:
     nstorms=cardinfo["NSTORMS"]
     defaultstorms=False
@@ -383,6 +376,7 @@ try:
         except IndexError:
             sys.exit("Even though you 'dimensionless SST', you didn't specify the file of precipitation distributions!")
     # Added by Ashar on 2026-05-19: tempscaling via ENHANCEDSST card — sets both rescaletype and tempscaling flag together
+    # Added by Ashar on 2026-11-06: this is now the only place that turns on the tempscaling flag
     elif rescalingtype.lower()=='tempscaling':
         print("You selected temperature-based (CC) scaling via ENHANCEDSST. This has not been thoroughly vetted. Be careful!")
         rescaletype = 'tempscaling'
@@ -2067,6 +2061,9 @@ if FreqAnalysis:
         whichx=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='int32')
         whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='int32')
         whichrain=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='float32')
+        # Added by Ashar on 2026-10-26: allocate per-point resampled temperatures for pointlist tempscaling (whichstep not needed: pointlist SST calls discard the step)
+        if tempscaling:
+            whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],npoints_list),dtype='float32')
     elif areatype.lower()=="box" or areatype.lower()=="basin" and tempscaling==True:
         whichx=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
         whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')  
@@ -2283,6 +2280,10 @@ if FreqAnalysis:
         pass
         
    
+    # Added by Ashar on 2026-10-26: tempscaling resampled temperatures are only paired with uniform storm placement; stop instead of running with unplaced storms
+    if tempscaling and transpotype!='uniform':
+        sys.exit("Temperature scaling (tempscaling) currently only supports TRANSPOSITION 'uniform' (lowercase), you have '"+str(transpotype)+"'!")
+
     # here is the main resampling and transposition loop
     for i in np.arange(0,nstorms):
         catrain,_,_,_,_,_,_,_,_,_,_ = RainyDay.readcatalog(stormlist[i])
@@ -2350,24 +2351,24 @@ if FreqAnalysis:
 #            rndloc=np.random.randint(0,np.sum(np.equal(domainmask,True)),np.sum(whichstorms==i))
             rndloc=np.random.randint(0,len(xmask),np.sum(whichstorms==i))
 
-            # One unique temperature per transposition realization. ### Added by Ashar on 2/6/2024 to support temperature scaling.
-            # If you want to use the same temperature for all realizations of a given storm,
-            # move this block outside of the loop over pt.
-            if tempscaling:
-                n_realizations = np.sum(whichstorms==i)
-                simulated_temps = skewnorm.rvs(a=0.984, loc=24.060, scale=4.278, size=n_realizations)
-
+            # Added by Ashar on 2026-10-26: temperature draw moved below so rectangular and irregular domains share it
             for pt in np.arange(0,whichx.shape[3]):
                 whichx[whichstorms==i,pt]=xmask[rndloc].reshape(len(xmask[rndloc]))
                 whichy[whichstorms==i,pt]=ymask[rndloc].reshape(len(ymask[rndloc]))
-                if tempscaling:
-                    whichtemp[whichstorms==i, pt] = simulated_temps.reshape(len(simulated_temps))
 
 
         # SET UP MANUAL PDF RESAMPLING
         elif transpotype=='manual':  
             sys.exit("not configured for manually supplied pdf yet!")
     
+        # Added by Ashar on 2026-10-26: one resampled temperature per transposition realization, drawn after storm placement for both
+        # rectangular and irregular uniform domains (same skew-normal as before), and copied to every pt so pointlist gets it too.
+        # Drawn after the placement draws so irregular tempscaling runs keep their previous RNG sequence.
+        if tempscaling:
+            n_realizations = np.sum(whichstorms==i)
+            simulated_temps = skewnorm.rvs(a=0.984, loc=24.060, scale=4.278, size=n_realizations)
+            whichtemp[whichstorms==i,:] = simulated_temps.reshape(len(simulated_temps),1)
+
         if durcorrection:
             passrain=np.array(RainyDay.rolling_sum(catrain, int(duration*60/rainprop.timeres)),dtype='float32')
             
