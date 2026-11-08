@@ -25,8 +25,11 @@ import os
 import sys
 import numpy as np
 import scipy as sp
+# Added by Ashar on 2026-11-07: sparse matrices and the linear solver for the quantile lines used in temperature scaling
+from scipy import sparse
+from scipy.optimize import linprog
 import glob
-import re     
+import re
 from datetime import datetime, date    
 import time
 import fiona
@@ -57,6 +60,8 @@ import geopandas as gp
 
 from scipy.stats import norm
 from scipy.stats import lognorm
+# Added by Ashar on 2026-11-08: skew-normal fitted to the transposed storms' pre-storm temperatures for temperature scaling
+from scipy.stats import skewnorm
 
 # plotting stuff, really only needed for diagnostic plots
 import matplotlib.pyplot as plt
@@ -147,6 +152,511 @@ def simulate_prestorm_temperatures_selfcalibrated(
     T_sim = T_expected + rng.normal(0.0, sigma, size=P.shape)
 
     return np.clip(T_sim, T_min, T_max), P_ref, T_ref
+
+
+# Added by Ashar on 2026-11-08: reads the times of a temperature file as datetime64 in minutes, including cftime times from noleap or 360-day calendars
+def read_temperature_times(ds, timename):
+    # Times that don't exist in the regular calendar (e.g. 30 February in a 360-day calendar) become NaT, so they never fall in a storm's window.
+    # Args:
+    #   ds (xr.Dataset): open temperature file
+    #   timename (str): name of the time variable in ds
+    # Returns:
+    #   np.ndarray: 1-D datetime64[m] times of the file
+    values = np.ravel(ds[timename].values)
+    if np.issubdtype(values.dtype, np.datetime64):
+        return values.astype('datetime64[m]')
+    if values.dtype == object:
+        times = np.full(values.shape[0], np.datetime64('NaT'), dtype='datetime64[m]')
+        for k, t in enumerate(values):
+            try:
+                times[k] = np.datetime64(datetime(t.year, t.month, t.day, t.hour, t.minute), 'm')
+            except (AttributeError, TypeError, ValueError):
+                pass
+        return times
+    sys.exit("The times in '" + timename + "' could not be read as dates in the temperature file " + str(ds.encoding.get('source', '')) + ", it needs units like 'hours since ...'")
+
+
+# Added by Ashar on 2026-11-08: finds the time, latitude or longitude variable of the temperature variable from its CF attributes, then from common names
+def find_temperature_coordinate(ds, tempvariable, kind, timedim=None):
+    # Checks are tried in order: standard_name, units, axis, then common names; the first check that any variable passes decides.
+    # Args:
+    #   ds (xr.Dataset): open temperature file
+    #   tempvariable (str): name of the temperature variable
+    #   kind (str): 'time', 'latitude' or 'longitude'
+    #   timedim (str): time dimension of the temperature variable, needed for 'latitude' and 'longitude' (default: None)
+    # Returns:
+    #   str: name of the coordinate variable
+    tempdims = ds[tempvariable].dims
+    # dimension coordinates first, then other coordinates, then data variables
+    names = [n for n in ds.coords if n in ds.dims] + [n for n in ds.coords if n not in ds.dims] + [n for n in ds.data_vars if n != tempvariable]
+    candidates = []
+    for name in names:
+        var = ds[name]
+        if kind == 'time':
+            if var.ndim == 1 and var.dims[0] in tempdims:
+                candidates.append(name)
+        else:
+            spacedims = [d for d in var.dims if d != timedim]
+            if 1 <= len(spacedims) <= 2 and all(d in tempdims for d in spacedims):
+                candidates.append(name)
+
+    axes = {'time': 'T', 'latitude': 'Y', 'longitude': 'X'}
+    unitnames = {'latitude': ('degrees_north', 'degree_north', 'degrees_n', 'degree_n', 'degreesn', 'degreen'),
+                 'longitude': ('degrees_east', 'degree_east', 'degrees_e', 'degree_e', 'degreese', 'degreee')}
+    commonnames = {'time': ('time', 'valid_time', 'Time', 'XTIME'),
+                   'latitude': ('latitude', 'lat', 'XLAT', 'nav_lat'),
+                   'longitude': ('longitude', 'lon', 'XLONG', 'nav_lon')}
+
+    def has_units(name):
+        var = ds[name]
+        units = str(var.attrs.get('units', var.encoding.get('units', ''))).strip().lower()
+        if kind == 'time':
+            return ' since ' in units or np.issubdtype(var.dtype, np.datetime64)
+        return units in unitnames[kind]
+
+    checks = [lambda name: str(ds[name].attrs.get('standard_name', '')).strip().lower() == kind,
+              has_units,
+              lambda name: str(ds[name].attrs.get('axis', '')).strip().upper() == axes[kind],
+              lambda name: name in commonnames[kind]]
+    for check in checks:
+        found = [name for name in candidates if check(name)]
+        if len(found) > 0:
+            return found[0]
+    sys.exit("The " + kind + " coordinate of '" + tempvariable + "' could not be found in the temperature file " + str(ds.encoding.get('source', ''))
+             + ", the variables there are: " + ", ".join(str(n) for n in ds.variables))
+
+
+# Added by Ashar on 2026-11-08: works out the layout of the temperature files from the first file: coordinate names, dimensions, grid and times
+def inspect_temperature_file(file, tempvariable):
+    # Args:
+    #   file (str): temperature file to inspect
+    #   tempvariable (str): name of the temperature variable
+    # Returns:
+    #   dict: 'timename', 'timedim', 'latname', 'lonname', 'ydim', 'xdim', 'otherdims' (other dimensions of size 1),
+    #         'grid2d' (True for 2-D latitude and longitude), 'lat' and 'lon' (cell centres, longitudes wrapped to -180..180),
+    #         'times' (datetime64[m] times of this file) and 'units' (temperature units in the file)
+    with xr.open_dataset(file) as ds:
+        if tempvariable not in ds.variables:
+            sys.exit("'TEMPERATUREVARIABLE' " + tempvariable + " was not found in " + file + ", the data variables there are: " + ", ".join(str(n) for n in ds.data_vars))
+        tempdims = ds[tempvariable].dims
+        timename = find_temperature_coordinate(ds, tempvariable, 'time')
+        timedim = ds[timename].dims[0]
+        latname = find_temperature_coordinate(ds, tempvariable, 'latitude', timedim)
+        lonname = find_temperature_coordinate(ds, tempvariable, 'longitude', timedim)
+        latvar = ds[latname]
+        lonvar = ds[lonname]
+        # some files (e.g. WRF) store the grid at every time step, it is taken from the first one
+        if timedim in latvar.dims:
+            latvar = latvar.isel({timedim: 0})
+        if timedim in lonvar.dims:
+            lonvar = lonvar.isel({timedim: 0})
+        if latvar.ndim == 1 and lonvar.ndim == 1 and latvar.dims[0] != lonvar.dims[0]:
+            grid2d = False
+            ydim, xdim = latvar.dims[0], lonvar.dims[0]
+        elif latvar.ndim == 2 and lonvar.ndim == 2 and set(latvar.dims) == set(lonvar.dims):
+            grid2d = True
+            ydim, xdim = latvar.dims
+            lonvar = lonvar.transpose(ydim, xdim)
+        else:
+            sys.exit("Latitude '" + latname + "' and longitude '" + lonname + "' need to be both 1-D or both 2-D on the same dimensions in " + file)
+        otherdims = [d for d in tempdims if d not in (timedim, ydim, xdim)]
+        if timedim not in tempdims or ydim not in tempdims or xdim not in tempdims:
+            sys.exit("'" + tempvariable + "' needs time, latitude and longitude dimensions in " + file + ", it has: " + ", ".join(tempdims))
+        if any(ds.dims[d] > 1 for d in otherdims):
+            sys.exit("'" + tempvariable + "' has other dimensions with more than one value in " + file + ": " + ", ".join(otherdims))
+        layout = {'timename': timename, 'timedim': timedim, 'latname': latname, 'lonname': lonname,
+                  'ydim': ydim, 'xdim': xdim, 'otherdims': otherdims, 'grid2d': grid2d,
+                  'lat': latvar.values, 'lon': ((lonvar.values + 180.) % 360.) - 180.,
+                  'times': read_temperature_times(ds, timename),
+                  'units': str(ds[tempvariable].attrs.get('units', ''))}
+    return layout
+
+
+# Added by Ashar on 2026-11-08: time step of a set of times, the median difference between them
+def temperature_time_step(times):
+    # Args:
+    #   times (np.ndarray): datetime64[m] times, NaT allowed
+    # Returns:
+    #   np.timedelta64 or None: time step in minutes, None if there are fewer than two different times
+    times = np.unique(times[~np.isnat(times)])
+    if times.shape[0] < 2:
+        return None
+    return np.timedelta64(int(np.median(np.diff(times).astype('int64'))), 'm')
+
+
+# Added by Ashar on 2026-11-08: the period a temperature file covers according to the date in its name, at whatever resolution the name has
+def date_period_from_filename(file):
+    # A full date (YYYYMMDD, YYYY-MM-DD, YYYY_MM_DD) wins over a month (YYYYMM, YYYY-MM, YYYY_MM), which wins over a year (YYYY).
+    # Digits joined to other digits are skipped, except hours after a YYYYMMDD date (e.g. YYYYMMDDHH).
+    # Args:
+    #   file (str): temperature file path, only the file name is used
+    # Returns:
+    #   tuple or None: (start, end) as datetime64[m], the file is taken to hold times from start up to end; None if the name has no date
+    name = os.path.basename(file)
+    patterns = [('D', r'(?<!\d)(\d{4})([-_])(\d{2})\2(\d{2})(?!\d)'),
+                ('D', r'(?<!\d)(\d{4})(\d{2})(\d{2})(?:\d{2}){0,3}(?!\d)'),
+                ('M', r'(?<!\d)(\d{4})([-_])(\d{2})(?!\d)'),
+                ('M', r'(?<!\d)(\d{4})(\d{2})(?!\d)'),
+                ('Y', r'(?<!\d)(\d{4})(?!\d)')]
+    for resolution, pattern in patterns:
+        for match in re.finditer(pattern, name):
+            digits = [g for g in match.groups() if g not in ('-', '_')]
+            year = int(digits[0])
+            month = int(digits[1]) if resolution in ('D', 'M') else 1
+            day = int(digits[2]) if resolution == 'D' else 1
+            if year < 1000 or year > 2999:
+                continue
+            try:
+                datetime(year, month, day)
+            except ValueError:
+                continue
+            if resolution == 'D':
+                start = np.datetime64('%04d-%02d-%02d' % (year, month, day), 'D')
+            elif resolution == 'M':
+                start = np.datetime64('%04d-%02d' % (year, month), 'M')
+            else:
+                start = np.datetime64('%04d' % year, 'Y')
+            return start.astype('datetime64[m]'), (start + 1).astype('datetime64[m]')
+    return None
+
+
+# Added by Ashar on 2026-11-08: the time span of each temperature file, from the dates in the file names if they check out, otherwise from the files themselves
+def index_temperature_files(flist, layout, timestep):
+    # Name dates are checked on the first, middle and last dated files; if they don't hold, every file is opened once to read its first and last time.
+    # Args:
+    #   flist (list of str): sorted temperature files, flist[0] is the file in layout
+    #   layout (dict): layout of the files, from inspect_temperature_file
+    #   timestep (np.timedelta64 or None): time step of the files
+    # Returns:
+    #   firsttimes (np.ndarray): datetime64[m], no time in the file is earlier than this
+    #   lasttimes (np.ndarray): datetime64[m], no time in the file is later than this
+    nfiles = len(flist)
+    # a file can hold times just past its named period (e.g. 00:00 of the next day), so allow one time step or one day, whichever is longer
+    tolerance = np.timedelta64(1, 'D').astype('timedelta64[m]')
+    if timestep is not None and timestep > tolerance:
+        tolerance = timestep
+    firsttimes = np.full(nfiles, np.datetime64('NaT'), dtype='datetime64[m]')
+    lasttimes = np.full(nfiles, np.datetime64('NaT'), dtype='datetime64[m]')
+    periods = [date_period_from_filename(file) for file in flist]
+    dated = [k for k in range(nfiles) if periods[k] is not None]
+    for k in dated:
+        firsttimes[k] = periods[k][0] - tolerance
+        lasttimes[k] = periods[k][1] + tolerance
+
+    def file_times(k):
+        if k == 0:
+            times = layout['times']
+        else:
+            with xr.open_dataset(flist[k]) as ds:
+                if layout['timename'] not in ds.variables:
+                    sys.exit("The time variable '" + layout['timename'] + "' was not found in " + flist[k])
+                times = read_temperature_times(ds, layout['timename'])
+        return times[~np.isnat(times)]
+
+    namesok = len(dated) > 0
+    samples = sorted(set([dated[0], dated[len(dated) // 2], dated[-1]])) if namesok else []
+    for k in samples:
+        times = file_times(k)
+        if np.any(times < firsttimes[k]) or np.any(times > lasttimes[k]):
+            print("The times in " + flist[k] + " don't match the date in its name")
+            namesok = False
+            break
+    if namesok:
+        toopen = [k for k in range(nfiles) if periods[k] is None]
+        print(f"Indexed {len(dated)} temperature files by the dates in their names")
+    else:
+        toopen = list(range(nfiles))
+    if len(toopen) > 0:
+        print(f"Opening {len(toopen)} temperature files to read their first and last times...")
+        for k in toopen:
+            times = file_times(k)
+            firsttimes[k] = times.min() if times.shape[0] > 0 else np.datetime64('NaT')
+            lasttimes[k] = times.max() if times.shape[0] > 0 else np.datetime64('NaT')
+    return firsttimes, lasttimes
+
+
+# Added by Ashar on 2026-11-08: converts temperatures in K, degC or degF to degC from the units attribute
+def temperature_to_celsius(values, units, file):
+    # Args:
+    #   values (np.ndarray): temperatures in the file's units
+    #   units (str): units attribute of the temperature variable
+    #   file (str): file the values came from, for the error message
+    # Returns:
+    #   np.ndarray: temperatures in degC
+    name = str(units).strip().lower().replace('°', 'deg').replace(' ', '_')
+    if name in ('k', 'kelvin', 'kelvins', 'degk', 'deg_k', 'degree_k', 'degrees_k', 'degreek', 'degreesk', 'degree_kelvin', 'degrees_kelvin'):
+        return values - 273.15
+    if name in ('c', 'degc', 'deg_c', 'celsius', 'degree_c', 'degrees_c', 'degreec', 'degreesc', 'degree_celsius', 'degrees_celsius'):
+        return values
+    if name in ('f', 'degf', 'deg_f', 'fahrenheit', 'degree_f', 'degrees_f', 'degreef', 'degreesf', 'degree_fahrenheit', 'degrees_fahrenheit'):
+        return (values - 32.) * 5. / 9.
+    sys.exit("Temperature units need to be K, degC or degF in " + file + ", the file says: '" + str(units) + "'")
+
+
+# Added by Ashar on 2026-11-08: the temperature cells inside a storm's window, or the nearest cell if none are inside
+def select_temperature_cells(templat, templon, ylim, xlim, grid2d):
+    # Args:
+    #   templat (np.ndarray): temperature cell latitudes, 1-D or 2-D
+    #   templon (np.ndarray): temperature cell longitudes wrapped to -180..180, same shape as templat
+    #   ylim (np.ndarray): catalog latitudes of the storm window
+    #   xlim (np.ndarray): catalog longitudes of the storm window, wrapped to -180..180
+    #   grid2d (bool): True if templat and templon are 2-D
+    # Returns:
+    #   yind (np.ndarray): indices along the y dimension to read
+    #   xind (np.ndarray): indices along the x dimension to read
+    #   cellmask (np.ndarray or None): for 2-D grids, which cells of the (yind, xind) block are in the window; None for 1-D grids, where all are
+    if not grid2d:
+        yind = np.where((templat >= ylim.min()) & (templat <= ylim.max()))[0]
+        xind = np.where((templon >= xlim.min()) & (templon <= xlim.max()))[0]
+        # the window can be smaller than a temperature cell (e.g. point runs), so use the nearest cell
+        if len(yind) == 0:
+            yind = np.array([np.argmin(np.abs(templat - ylim.mean()))])
+        if len(xind) == 0:
+            xind = np.array([np.argmin(np.abs(templon - xlim.mean()))])
+        return yind, xind, None
+    inwindow = (templat >= ylim.min()) & (templat <= ylim.max()) & (templon >= xlim.min()) & (templon <= xlim.max())
+    if not np.any(inwindow):
+        # nearest cell centre, with longitude distances shrunk by cos(latitude)
+        dlon = ((templon - xlim.mean() + 180.) % 360.) - 180.
+        distance = (templat - ylim.mean())**2 + (dlon * np.cos(np.radians(ylim.mean())))**2
+        inwindow = np.zeros(templat.shape, dtype=bool)
+        inwindow[np.unravel_index(np.nanargmin(distance), templat.shape)] = True
+    rows = np.where(np.any(inwindow, axis=1))[0]
+    cols = np.where(np.any(inwindow, axis=0))[0]
+    yind = np.arange(rows.min(), rows.max() + 1)
+    xind = np.arange(cols.min(), cols.max() + 1)
+    return yind, xind, inwindow[np.ix_(yind, xind)]
+
+
+# Added by Ashar on 2026-11-07: pre-storm temperature for each storm from an hourly gridded temperature dataset
+# Added by Ashar on 2026-11-08: reads the file layout instead of assuming it: any date resolution (or none) in file names, CF or common coordinate names, 1-D or 2-D grids, K/degC/degF, any time step, non-standard calendars
+def get_prestorm_temperatures(temppath, tempvariable, cattime, catx, caty, latrange, lonrange,
+                              maskheight, maskwidth, nhours=6):
+    # Averages the fields over time for each cell in the storm's window, then averages those cells into one number per storm.
+    # Prints a warning if storms have fewer fields than the time step of the files gives for nhours.
+    # Args:
+    #   temppath (str): glob path of the temperature files; dates in the file names (day, month or year) are used to find files quickly if they match the times inside
+    #   tempvariable (str): name of the temperature variable in those files
+    #   cattime (np.ndarray): catalog times, datetime64, shape (nstorms, ntimes); cattime[i,0] is taken as the storm start.
+    #                         Temperature times are assumed to be UTC like the rain times.
+    #   catx (np.ndarray): x index of each storm's window in lonrange
+    #   caty (np.ndarray): y index of each storm's window in latrange
+    #   latrange (array-like): catalog latitudes
+    #   lonrange (array-like): catalog longitudes
+    #   maskheight (int): storm window height in catalog cells
+    #   maskwidth (int): storm window width in catalog cells
+    #   nhours (int): hours before the storm start to average over (default: 6)
+    #   All temperature files are assumed to be on the grid of the first file.
+    # Returns:
+    #   T_prestorm (np.ndarray): pre-storm temperature of each storm in degC, NaN if no fields were found
+    #   nfields (np.ndarray): number of temperature fields used for each storm
+    flist = sorted(glob.glob(temppath))
+    if len(flist) == 0:
+        sys.exit("No temperature files were found at 'TEMPERATUREPATH': " + temppath)
+
+    layout = inspect_temperature_file(flist[0], tempvariable)
+    timestep = temperature_time_step(layout['times'])
+    if timestep is None and len(flist) > 1:
+        with xr.open_dataset(flist[1]) as ds:
+            timestep = temperature_time_step(np.concatenate([layout['times'], read_temperature_times(ds, layout['timename'])]))
+    print(f"Temperature files: time '{layout['timename']}', latitude '{layout['latname']}', longitude '{layout['lonname']}' ({'2-D' if layout['grid2d'] else '1-D'}), "
+          + (f"one field every {int(timestep.astype('int64'))} minutes" if timestep is not None else "time step unknown") + f", units '{layout['units']}'")
+
+    # index the files by the times they hold, so each storm only opens the files it needs
+    firsttimes, lasttimes = index_temperature_files(flist, layout, timestep)
+    fileorder = np.argsort(firsttimes, kind='stable')
+
+    lats = np.asarray(latrange, dtype='float64')
+    lons = np.asarray(lonrange, dtype='float64')
+    # put the catalog longitudes on the same -180..180 convention as the temperature longitudes
+    lons = np.where((lons < -180.) | (lons >= 180.), ((lons + 180.) % 360.) - 180., lons)
+    timedim, ydim, xdim = layout['timedim'], layout['ydim'], layout['xdim']
+    nstorms = cattime.shape[0]
+    T_prestorm = np.full(nstorms, np.nan, dtype='float64')
+    nfields = np.zeros(nstorms, dtype='int32')
+
+    for i in range(nstorms):
+        stormstart = cattime[i, 0].astype('datetime64[m]')
+        windowstart = stormstart - np.timedelta64(nhours, 'h')
+        ylim = lats[int(caty[i]):int(caty[i]) + maskheight]
+        xlim = lons[int(catx[i]):int(catx[i]) + maskwidth]
+        yind, xind, cellmask = select_temperature_cells(layout['lat'], layout['lon'], ylim, xlim, layout['grid2d'])
+
+        overlapping = fileorder[(firsttimes[fileorder] < stormstart) & (lasttimes[fileorder] >= windowstart)]
+        fields = []
+        seentimes = set()
+        for k in overlapping:
+            file = flist[k]
+            with xr.open_dataset(file) as ds:
+                if tempvariable not in ds.variables:
+                    sys.exit("'TEMPERATUREVARIABLE' " + tempvariable + " was not found in " + file)
+                temptimes = read_temperature_times(ds, layout['timename'])
+                keep = [t for t, tt in enumerate(temptimes) if windowstart <= tt < stormstart and int(tt.astype('int64')) not in seentimes]
+                if len(keep) == 0:
+                    continue
+                seentimes.update(temptimes[keep].astype('int64').tolist())
+                selection = {timedim: keep, ydim: yind, xdim: xind}
+                selection.update({d: 0 for d in layout['otherdims']})
+                tempdata = ds[tempvariable].isel(selection).transpose(timedim, ydim, xdim)
+                units = tempdata.attrs.get('units', '')
+                tempvalues = tempdata.values.astype('float64')
+            tempvalues[(tempvalues < -200.) | (tempvalues > 400.)] = np.nan
+            fields.append(temperature_to_celsius(tempvalues, units, file))
+
+        if len(fields) > 0:
+            fields = np.concatenate(fields, axis=0)
+            nfields[i] = fields.shape[0]
+            if cellmask is None:
+                T_prestorm[i] = np.nanmean(np.nanmean(fields, axis=0))
+            else:
+                T_prestorm[i] = np.nanmean(np.nanmean(fields, axis=0)[cellmask])
+
+    # Added by Ashar on 2026-11-08: warn about storms with fewer fields than the time step gives, replacing the hard-coded 6 hourly fields in RainyDay_Py3.py
+    if timestep is not None:
+        expectedfields = max(1, int(np.timedelta64(nhours, 'h').astype('timedelta64[m]').astype('int64') // timestep.astype('int64')))
+        if np.any(nfields < expectedfields):
+            print("WARNING: " + str(np.sum(nfields < expectedfields)) + " storms have fewer than " + str(expectedfields) + " temperature fields in the " + str(nhours) + " hours before they start!")
+
+    return T_prestorm, nfields
+
+
+# Added by Ashar on 2026-11-07: share of the transposition domain each storm covers with rain, used to filter storms for temperature scaling
+def get_storm_area_fractions(stormlist, domainmask, ratethreshold=1.0):
+    # A cell counts as covered if its rain rate reaches ratethreshold at any time in the storm's catalog window.
+    # Args:
+    #   stormlist (list of str): storm catalog files, one per storm
+    #   domainmask (np.ndarray): 2-D transposition domain mask, values above 0 are inside the domain
+    #   ratethreshold (float): rain rate that counts as covered, mm/h (default: 1.0)
+    # Returns:
+    #   np.ndarray: fraction of the domain covered by each storm, from 0 to 1, in stormlist order
+    indomain = np.asarray(domainmask) > 0
+    ndomaincells = np.sum(indomain)
+    if ndomaincells == 0:
+        sys.exit("The domain mask has no cells in it, so storm areas can't be calculated!")
+
+    fractions = np.zeros(len(stormlist), dtype='float64')
+    for i, stormfile in enumerate(stormlist):
+        stormrain = np.array(readcatalog(stormfile)[0], dtype='float32')
+        stormrain[stormrain < 0.] = np.nan
+        peakrate = np.fmax.reduce(stormrain, axis=0)
+        fractions[i] = np.sum((peakrate >= ratethreshold) & indomain) / ndomaincells
+    return fractions
+
+
+# Added by Ashar on 2026-11-07: picks the storms used to fit the scaling rates: passes the area limit, then the deepest of those. Storms left out are still transposed.
+def select_tempscaling_fit_storms(catmax, stormareas, maxareafraction, nfitstorms):
+    # Args:
+    #   catmax (np.ndarray): depth of each catalog storm, mm
+    #   stormareas (np.ndarray): fraction of the domain covered by each storm, in the same order as catmax
+    #   maxareafraction (float): largest allowed area fraction, storms above it are not used for fitting
+    #   nfitstorms (int): number of deepest storms to keep after the area limit
+    # Returns:
+    #   np.ndarray: boolean, one value per storm, True for storms used to fit the scaling rates
+    depths = np.asarray(catmax, dtype='float64')
+    areas = np.asarray(stormareas, dtype='float64')
+    if depths.shape[0] != areas.shape[0]:
+        sys.exit("There are " + str(areas.shape[0]) + " storm areas but " + str(depths.shape[0]) + " storm depths!")
+    if nfitstorms < 1:
+        sys.exit("'TEMPFITSTORMS' needs to be at least 1!")
+    passing = np.where(areas <= maxareafraction)[0]
+    if passing.shape[0] == 0:
+        sys.exit("No storms pass the temperature scaling area limit, so the scaling rates can't be fitted!")
+    deepest = passing[np.argsort(depths[passing], kind='stable')][-nfitstorms:]
+    fitstorms = np.zeros(depths.shape[0], dtype=bool)
+    fitstorms[deepest] = True
+    return fitstorms
+
+
+# Added by Ashar on 2026-11-07: fits one quantile regression line of ln(storm depth) on pre-storm temperature for each quantile level
+def fit_temperature_quantile_lines(T_prestorm, catmax, taus=(0.25, 0.50, 0.75, 0.90, 0.95)):
+    # Each line is fitted once on all the storms given, as a linear program solved by scipy.
+    # Args:
+    #   T_prestorm (np.ndarray): pre-storm temperature of each storm, degC
+    #   catmax (np.ndarray): depth of each storm, mm, in the same order as T_prestorm
+    #   taus (tuple of float): quantile levels in ascending order (default: 0.25, 0.50, 0.75, 0.90, 0.95)
+    # Returns:
+    #   taus (np.ndarray): quantile levels
+    #   slopes (np.ndarray): slope of each line, change in ln(depth) per degC
+    #   intercepts (np.ndarray): intercept of each line, ln(depth) at 0 degC
+    temperatures = np.asarray(T_prestorm, dtype='float64')
+    depths = np.asarray(catmax, dtype='float64')
+    taus = np.asarray(taus, dtype='float64')
+    if temperatures.shape[0] != depths.shape[0]:
+        sys.exit("There are " + str(temperatures.shape[0]) + " pre-storm temperatures but " + str(depths.shape[0]) + " storm depths!")
+    if np.any(~np.isfinite(temperatures)):
+        sys.exit("Quantile lines can't be fitted because some pre-storm temperatures are missing!")
+    if np.any(~np.isfinite(depths)) or np.any(depths <= 0.):
+        sys.exit("Quantile lines can't be fitted because some storm depths are zero or missing!")
+    if np.any(np.diff(taus) <= 0.) or taus[0] <= 0. or taus[-1] >= 1.:
+        sys.exit("Quantile levels need to be in ascending order, between 0 and 1!")
+    if temperatures.shape[0] < 2 or np.ptp(temperatures) == 0.:
+        sys.exit("Quantile lines need at least two storms with different pre-storm temperatures!")
+
+    nstorms = temperatures.shape[0]
+    logdepths = np.log(depths)
+    # unknowns are the intercept, the slope, then each storm's positive and negative residual
+    predictors = np.column_stack([np.ones(nstorms), temperatures])
+    constraints = sparse.hstack([sparse.csr_matrix(predictors), sparse.identity(nstorms, format='csr'), -sparse.identity(nstorms, format='csr')], format='csr')
+    bounds = [(None, None), (None, None)] + [(0., None)] * (2 * nstorms)
+    slopes = np.zeros(taus.shape[0], dtype='float64')
+    intercepts = np.zeros(taus.shape[0], dtype='float64')
+    for k, tau in enumerate(taus):
+        costs = np.concatenate([np.zeros(2), tau * np.ones(nstorms), (1. - tau) * np.ones(nstorms)])
+        solution = linprog(costs, A_eq=constraints, b_eq=logdepths, bounds=bounds, method='highs')
+        if solution.status != 0:
+            sys.exit("The quantile line at tau = " + str(tau) + " could not be fitted: " + str(solution.message))
+        intercepts[k], slopes[k] = solution.x[0], solution.x[1]
+    return taus, slopes, intercepts
+
+
+# Added by Ashar on 2026-11-07: gives each storm its conditional quantile and its own scaling rate from the quantile lines
+def assign_storm_quantile_rates(T_prestorm, catmax, taus, slopes, intercepts):
+    # All lines are evaluated at the storm's temperature and sorted, so crossing lines are handled, then the storm's quantile
+    # and rate are interpolated from the two lines around it. Storms outside the lines get the lowest or highest quantile's rate.
+    # Args:
+    #   T_prestorm (np.ndarray): pre-storm temperature of each storm, degC
+    #   catmax (np.ndarray): depth of each storm, mm, in the same order as T_prestorm
+    #   taus (np.ndarray): quantile levels of the lines, in ascending order
+    #   slopes (np.ndarray): slope of each line, change in ln(depth) per degC
+    #   intercepts (np.ndarray): intercept of each line, ln(depth) at 0 degC
+    # Returns:
+    #   stormquantiles (np.ndarray): conditional quantile of each storm
+    #   stormrates (np.ndarray): scaling rate of each storm, change in ln(depth) per degC, used as exp(rate * (T_res - T_orig))
+    temperatures = np.asarray(T_prestorm, dtype='float64')
+    logdepths = np.log(np.asarray(catmax, dtype='float64'))
+    taus = np.asarray(taus, dtype='float64')
+    slopes = np.asarray(slopes, dtype='float64')
+    intercepts = np.asarray(intercepts, dtype='float64')
+
+    stormquantiles = np.zeros(temperatures.shape[0], dtype='float64')
+    stormrates = np.zeros(temperatures.shape[0], dtype='float64')
+    for i in range(temperatures.shape[0]):
+        linevalues = intercepts + slopes * temperatures[i]
+        order = np.argsort(linevalues, kind='stable')
+        stormquantiles[i] = np.interp(logdepths[i], linevalues[order], taus)
+        stormrates[i] = np.interp(stormquantiles[i], taus, slopes[order])
+    return stormquantiles, stormrates
+
+
+# Added by Ashar on 2026-11-08: fits the skew-normal that the resampled temperatures T_res are drawn from, using the transposed storms' pre-storm temperatures
+def fit_prestorm_temperature_distribution(T_prestorm, minstorms=10):
+    # Uses every temperature given, with no area or minimum temperature filter. Fitted by maximum likelihood with scipy.stats.skewnorm.fit.
+    # Args:
+    #   T_prestorm (np.ndarray): pre-storm temperature of each transposed storm, degC
+    #   minstorms (int): fewest temperatures allowed for the fit (default: 10)
+    # Returns:
+    #   a (float): skew-normal shape parameter
+    #   loc (float): skew-normal location parameter, degC
+    #   scale (float): skew-normal scale parameter, degC
+    temperatures = np.asarray(T_prestorm, dtype='float64').ravel()
+    if np.any(~np.isfinite(temperatures)):
+        sys.exit("The pre-storm temperature distribution can't be fitted because some pre-storm temperatures are missing!")
+    if temperatures.shape[0] < minstorms:
+        sys.exit("The pre-storm temperature distribution needs at least " + str(minstorms) + " storms to fit, there are only " + str(temperatures.shape[0]) + "!")
+    if np.ptp(temperatures) == 0.:
+        sys.exit("The pre-storm temperature distribution can't be fitted because all pre-storm temperatures are the same!")
+    a, loc, scale = skewnorm.fit(temperatures)
+    return float(a), float(loc), float(scale)
 
 
 # =============================================================================
@@ -874,7 +1384,8 @@ def numba_multimask_calc(passrain_temp,trimmask,y,x,maskheight,maskwidth):
 def SSTalt_singlecell(passrain, sstx, ssty, trimmask, maskheight, maskwidth,
                       intensemean=None, intensestd=None, intensecorr=None,
                       homemean=None, homestd=None, durcheck=False,
-                      T_orig=None, T_resampled=None, cc_rate=0.07):
+                      T_orig=None, T_resampled=None, cc_rate=None):
+    # Added by Ashar on 2026-11-07: cc_rate no longer defaults to 0.07, so tempscaling calls must pass the fitted rate
     """
     Single-cell rainfall extraction for point-mode SST.
 
@@ -893,7 +1404,7 @@ def SSTalt_singlecell(passrain, sstx, ssty, trimmask, maskheight, maskwidth,
         durcheck (bool): if True, find the peak duration timestep
         T_orig (float): pre-storm temperature of the original catalog storm (°C)
         T_resampled (np.ndarray): resampled temperatures, one per realization (°C)
-        cc_rate (float): empirical CC scaling rate (default 0.07 = 7%/°C)
+        cc_rate (float): scaling rate, slope of ln(rainfall) per °C (required when T_orig and T_resampled are given)
 
     Returns:
         no rescaling: rainsum (float32), whichstep (int32)
@@ -946,15 +1457,16 @@ def SSTalt_singlecell(passrain, sstx, ssty, trimmask, maskheight, maskwidth,
 
 
 # Added by Ashar on 2026-05-19: CC temperature scaling variant of SSTalt
+# Added by Ashar on 2026-11-07: cc_rate is now required, so a missing rate can't silently become 7%/degC
 def SSTalt_tempscaling(passrain, sstx, ssty, trimmask, maskheight, maskwidth,
-                       T_orig, T_resampled, cc_rate=0.07, durcheck=False):
+                       T_orig, T_resampled, cc_rate, durcheck=False):
     # passrain    (np.ndarray) — storm rainfall array from catalog
     # sstx, ssty  (np.ndarray) — transposition x/y positions, one per realization
     # trimmask    (np.ndarray) — watershed mask
     # maskheight, maskwidth (int) — mask dimensions in grid cells
     # T_orig      (float)      — pre-storm temperature of the original catalog storm (°C)
     # T_resampled (np.ndarray) — resampled temperatures, one per realization (°C)
-    # cc_rate     (float)      — empirical CC scaling rate (default 0.07 = 7%/°C)
+    # cc_rate     (float)      — scaling rate, slope of ln(rainfall) per °C (required)
     # durcheck    (bool)       — if True, find the peak duration timestep
     # Returns: rainsum (float32), multiout (float32), whichstep (int32)
     rainsum   = np.zeros((len(sstx)), dtype='float32')

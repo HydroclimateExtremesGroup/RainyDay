@@ -381,6 +381,19 @@ try:
         print("You selected temperature-based (CC) scaling via ENHANCEDSST. This has not been thoroughly vetted. Be careful!")
         rescaletype = 'tempscaling'
         tempscaling = True
+        # Added by Ashar on 2026-11-07: ask for the temperature dataset used for pre-storm temperatures
+        temppath = cardinfo.get("TEMPERATUREPATH", "")
+        tempvariable = cardinfo.get("TEMPERATUREVARIABLE", "")
+        if temppath == "" or tempvariable == "":
+            sys.exit("ENHANCEDSST 'tempscaling' needs 'TEMPERATUREPATH' (a path to the hourly temperature files, like 'RAINPATH') and 'TEMPERATUREVARIABLE' (the temperature variable name in those files)!")
+        # Added by Ashar on 2026-11-07: limits for the storms used to fit scaling rates, only read for temperature scaling. Defaults: leave out storms with at least 1 mm/h over more than 30% of the domain, keep the deepest 1,000, and leave out storms at or below 5 degC
+        try:
+            tempmaxareafraction = float(cardinfo.get("TEMPMAXAREAFRACTION", 0.30))
+            temparearate = float(cardinfo.get("TEMPAREARATE", 1.0))
+            tempminimum = float(cardinfo.get("TEMPMINIMUM", 5.0))
+            tempfitstorms = int(cardinfo.get("TEMPFITSTORMS", 1000))
+        except (TypeError, ValueError):
+            sys.exit("'TEMPMAXAREAFRACTION', 'TEMPAREARATE', 'TEMPMINIMUM' and 'TEMPFITSTORMS' need to be numbers!")
     else:
         print("No rescaling will be performed!")
 except Exception:
@@ -1414,6 +1427,15 @@ if CreateCatalog==False:
         
 else:
     nstorms_cat=len(stormlist)
+
+# Added by Ashar on 2026-11-07: temperature scaling only: choose the storms used to fit the rates from the whole catalog, before NSTORMS trims the storms to transpose. This doesn't remove any storm from transposition.
+if tempscaling:
+    print("calculating storm areas to choose the storms for fitting scaling rates...")
+    stormareas = RainyDay.get_storm_area_fractions(stormlist, domainmask, ratethreshold=temparearate)
+    tempfitmask = RainyDay.select_tempscaling_fit_storms(catmax, stormareas, tempmaxareafraction, tempfitstorms)
+    print(f"Rate fitting storms: {np.sum(stormareas <= tempmaxareafraction)} of {nstorms_cat} catalog storms have at most {100*tempmaxareafraction:.0f}% of the domain with at least {temparearate:.2f} mm/h, using the deepest {np.sum(tempfitmask)}")
+    tempcatmax, tempcatx, tempcaty, tempcattime = catmax.copy(), np.array(catx, dtype=int), np.array(caty, dtype=int), cattime.copy()
+
 if nstorms<nstorms_cat:
     stormlist = stormlist[-nstorms:]
     nstorms = len(stormlist)
@@ -1431,23 +1453,34 @@ catx = np.array(catx, dtype=int)
 caty = np.array(caty, dtype=int)
 
 if tempscaling:   ### This is where we simulate the prestorm temperatures, which are needed for the temperature-based scaling of the storm intensities.
-    print("simulating prestorm temperatures...")
-    T_sim, P_ref, T_ref = RainyDay.simulate_prestorm_temperatures_selfcalibrated(
-        basin_rainfall = catmax,
-        cc_rate        = 0.07,
-        T_mean         = 25.80,    # <-- set this to your regional mean summer T
-        sigma          = 3.0,
-        seed           = 42,
-    )
+    # Added by Ashar on 2026-11-07: replaced the simulated T_sim with observed pre-storm temperatures, one per storm, in the same order as catmax
+    # Added by Ashar on 2026-11-07: read temperatures for the storms to transpose and the storms used for fitting; these two groups can differ
+    print("reading prestorm temperatures...")
+    _transposemask = np.zeros(tempcatmax.shape[0], dtype=bool)
+    _transposemask[-nstorms:] = True
+    _readmask = _transposemask | tempfitmask
+    _catalogtemps = np.full(tempcatmax.shape[0], np.nan, dtype='float64')
+    _catalogtemps[_readmask], _nfields = RainyDay.get_prestorm_temperatures(temppath, tempvariable, tempcattime[_readmask, :], tempcatx[_readmask], tempcaty[_readmask],
+                                                                             latrange, lonrange, maskheight, maskwidth)
+    if np.any(np.isnan(_catalogtemps[_readmask])):
+        sys.exit("No pre-storm temperature was found for storms starting at: " + str(tempcattime[_readmask & np.isnan(_catalogtemps), 0]))
+    # Added by Ashar on 2026-11-08: removed the hard-coded 'fewer than 6 hourly fields' warning; get_prestorm_temperatures now warns using the time step of the temperature files
+    T_prestorm = _catalogtemps[_transposemask]
+    print(f"Pre-storm temperatures of transposed storms: mean {np.mean(T_prestorm):.2f}, SD {np.std(T_prestorm):.2f}, min {np.min(T_prestorm):.2f}, max {np.max(T_prestorm):.2f} degC")
+    # Added by Ashar on 2026-11-08: fit the skew-normal for the resampled temperatures T_res to all transposed storms' pre-storm temperatures, replacing the hard-coded one
+    tempskew_a, tempskew_loc, tempskew_scale = RainyDay.fit_prestorm_temperature_distribution(T_prestorm)
+    _tempskewmean, _tempskewvar = skewnorm.stats(tempskew_a, loc=tempskew_loc, scale=tempskew_scale, moments='mv')
+    print(f"Skew-normal fitted to pre-storm temperatures of transposed storms for T_res: a {tempskew_a:.2f}, loc {tempskew_loc:.2f}, scale {tempskew_scale:.2f}, mean {float(_tempskewmean):.2f}, SD {np.sqrt(float(_tempskewvar)):.2f} degC")
 
-    # Added by Ashar on 2026-05-19: fit empirical CC rate from simulated T_sim and catmax
-    # Args: T_sim (1-D float array, degC) — simulated per-storm temperatures
-    #       catmax (1-D float array, mm)  — basin rainfall totals for each catalog storm
-    # Returns: cc_rate_empirical (float) — data-derived CC rate to use in SSTalt_tempscaling
-    _slope, _ = np.polyfit(T_sim, np.log(catmax.astype(float)), 1)
-    cc_rate_empirical = float(np.exp(_slope) - 1)
-    cc_rate_empirical = 0.07
-    print(f"Empirical CC scaling rate: {cc_rate_empirical*100:.2f}% per degC  (assumed: 7.00%)")
+    # Added by Ashar on 2026-11-07: leave storms at or below the minimum pre-storm temperature out of the rate fit; they can still be transposed
+    tempfitmask = tempfitmask & (_catalogtemps > tempminimum)
+    print(f"Rate fitting storms: {np.sum(tempfitmask)} are above {tempminimum:.2f} degC; {np.sum(_transposemask & tempfitmask)} of the {nstorms} transposed storms are among them")
+
+    # Added by Ashar on 2026-11-07: replaced the single scaling rate with per-quantile rates; lines are fitted on the fitting storms and every transposed storm gets its own rate from them
+    tempquantiles, tempquantilerates, tempquantileintercepts = RainyDay.fit_temperature_quantile_lines(_catalogtemps[tempfitmask], tempcatmax[tempfitmask])
+    stormquantiles, S_storm = RainyDay.assign_storm_quantile_rates(T_prestorm, catmax, tempquantiles, tempquantilerates, tempquantileintercepts)
+    print("Scaling rate by quantile, slope of ln(catmax) on T_prestorm: " + ", ".join(f"tau {_tau:.2f}: {100*_rate:.2f}% per degC" for _tau, _rate in zip(tempquantiles, tempquantilerates)))
+    print(f"Storm scaling rates: min {100*np.min(S_storm):.2f}, median {100*np.median(S_storm):.2f}, max {100*np.max(S_storm):.2f}% per degC, across {nstorms} transposed storms")
 
 #==============================================================================
 # If the storm catalog has a different duration than the specified duration, fix it!
@@ -2069,14 +2102,18 @@ if FreqAnalysis:
         whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')  
         whichrain=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32')
         whichstep=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
-        whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32') #### Added by Ashar on 2/6/2024 to support temperature scaling
+        # Added by Ashar on 2026-11-07: only allocate resampled temperatures for temperature scaling
+        if tempscaling:
+            whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32') #### Added by Ashar on 2/6/2024 to support temperature scaling
 
     else:
         whichx=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
         whichy=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')  
         whichrain=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32')
         whichstep=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='int32')
-        whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32') #### Added by Ashar on 2/6/2024 to support temperature scaling
+        # Added by Ashar on 2026-11-07: only allocate resampled temperatures for temperature scaling
+        if tempscaling:
+            whichtemp=np.zeros((whichstorms.shape[0],whichstorms.shape[1],whichstorms.shape[2],1),dtype='float32') #### Added by Ashar on 2/6/2024 to support temperature scaling
     if durcorrection:
         whichtimeind=np.zeros((whichstorms.shape),dtype='float32')
     
@@ -2364,9 +2401,10 @@ if FreqAnalysis:
         # Added by Ashar on 2026-10-26: one resampled temperature per transposition realization, drawn after storm placement for both
         # rectangular and irregular uniform domains (same skew-normal as before), and copied to every pt so pointlist gets it too.
         # Drawn after the placement draws so irregular tempscaling runs keep their previous RNG sequence.
+        # Added by Ashar on 2026-11-08: the skew-normal parameters are now the ones fitted to the transposed storms' pre-storm temperatures, not the hard-coded a=0.984, loc=24.060, scale=4.278
         if tempscaling:
             n_realizations = np.sum(whichstorms==i)
-            simulated_temps = skewnorm.rvs(a=0.984, loc=24.060, scale=4.278, size=n_realizations)
+            simulated_temps = skewnorm.rvs(a=tempskew_a, loc=tempskew_loc, scale=tempskew_scale, size=n_realizations)
             whichtemp[whichstorms==i,:] = simulated_temps.reshape(len(simulated_temps),1)
 
         if durcorrection:
@@ -2426,9 +2464,11 @@ if FreqAnalysis:
                             passrain,
                             whichx[whichstorms==i, pt], whichy[whichstorms==i, pt],
                             trimmask, maskheight, maskwidth,
-                            T_orig      = T_sim[i],
+                            # Added by Ashar on 2026-11-07: use the observed pre-storm temperature instead of T_sim
+                            T_orig      = T_prestorm[i],
                             T_resampled = whichtemp[whichstorms==i, pt],
-                            cc_rate     = cc_rate_empirical,
+                            # Added by Ashar on 2026-11-07: each storm uses its own per-quantile rate
+                            cc_rate     = S_storm[i],
                             durcheck    = durcorrection)
                     whichrain[whichstorms==i, pt] = temprain * rainprop.timeres / 60. / mnorm
                 elif areatype.lower()=='pointlist':
@@ -2465,9 +2505,11 @@ if FreqAnalysis:
                                 passrain,
                                 whichx[whichstorms==i, pt], whichy[whichstorms==i, pt],
                                 trimmask, 1, 1,
-                                T_orig      = T_sim[i],
+                                # Added by Ashar on 2026-11-07: use the observed pre-storm temperature instead of T_sim
+                                T_orig      = T_prestorm[i],
                                 T_resampled = whichtemp[whichstorms==i, pt],
-                                cc_rate     = cc_rate_empirical,
+                                # Added by Ashar on 2026-11-07: each storm uses its own per-quantile rate
+                                cc_rate     = S_storm[i],
                                 durcheck    = durcorrection)
                     else:
                         temprain,_=RainyDay.SSTalt_singlecell(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,maskheight,maskwidth,durcheck=durcorrection)
@@ -2498,9 +2540,11 @@ if FreqAnalysis:
                                 whichx[whichstorms==i, pt], whichy[whichstorms==i, pt],
                                 trimmask, 1, 1,
                                 durcheck    = durcorrection,
-                                T_orig      = T_sim[i],
+                                # Added by Ashar on 2026-11-07: use the observed pre-storm temperature instead of T_sim
+                                T_orig      = T_prestorm[i],
                                 T_resampled = whichtemp[whichstorms==i, pt],
-                                cc_rate     = cc_rate_empirical)
+                                # Added by Ashar on 2026-11-07: each storm uses its own per-quantile rate
+                                cc_rate     = S_storm[i])
                         whichrain[whichstorms==i, pt] = temprain * rainprop.timeres / 60.
                     else:
                         temprain,whichstep[whichstorms==i,pt]=RainyDay.SSTalt_singlecell(passrain,whichx[whichstorms==i,pt],whichy[whichstorms==i,pt],trimmask,1,1,durcheck=durcorrection)
