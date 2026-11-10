@@ -520,51 +520,39 @@ def get_prestorm_temperatures(temppath, tempvariable, cattime, catx, caty, latra
     return T_prestorm, nfields
 
 
-# Added by Ashar on 2026-11-07: share of the transposition domain each storm covers with rain, used to filter storms for temperature scaling
-def get_storm_area_fractions(stormlist, domainmask, ratethreshold=1.0):
-    # A cell counts as covered if its rain rate reaches ratethreshold at any time in the storm's catalog window.
+# Added by Ashar on 2026-11-07: picks the storms used to fit the scaling rates: passes the area limit, then the deepest of those. Storms left out are still transposed.
+# Added by Ashar on 2026-11-09: merged get_storm_area_fractions into this function, so it now reads each storm's area itself and returns the areas with the fit mask.
+# Removed the cap on the number of deepest storms: every storm within the area limit is now kept.
+def select_tempscaling_fit_storms(stormlist, catmax, domainmask, maxareafraction, ratethreshold=1.0):
+    # A storm's area is the share of domain cells where its rain rate reaches ratethreshold at any time in its catalog window.
     # Args:
-    #   stormlist (list of str): storm catalog files, one per storm
+    #   stormlist (list of str): storm catalog files, one per storm, in the same order as catmax
+    #   catmax (np.ndarray): depth of each catalog storm, mm, only used to check it lines up with stormlist
     #   domainmask (np.ndarray): 2-D transposition domain mask, values above 0 are inside the domain
+    #   maxareafraction (float): largest allowed area fraction, storms above it are not used for fitting
     #   ratethreshold (float): rain rate that counts as covered, mm/h (default: 1.0)
     # Returns:
+    #   np.ndarray: boolean, one value per storm, True for storms used to fit the scaling rates
     #   np.ndarray: fraction of the domain covered by each storm, from 0 to 1, in stormlist order
+    depths = np.asarray(catmax, dtype='float64')
+    if depths.shape[0] != len(stormlist):
+        sys.exit("There are " + str(len(stormlist)) + " storm files but " + str(depths.shape[0]) + " storm depths!")
     indomain = np.asarray(domainmask) > 0
     ndomaincells = np.sum(indomain)
     if ndomaincells == 0:
         sys.exit("The domain mask has no cells in it, so storm areas can't be calculated!")
 
-    fractions = np.zeros(len(stormlist), dtype='float64')
+    areas = np.zeros(len(stormlist), dtype='float64')
     for i, stormfile in enumerate(stormlist):
         stormrain = np.array(readcatalog(stormfile)[0], dtype='float32')
         stormrain[stormrain < 0.] = np.nan
         peakrate = np.fmax.reduce(stormrain, axis=0)
-        fractions[i] = np.sum((peakrate >= ratethreshold) & indomain) / ndomaincells
-    return fractions
+        areas[i] = np.sum((peakrate >= ratethreshold) & indomain) / ndomaincells
 
-
-# Added by Ashar on 2026-11-07: picks the storms used to fit the scaling rates: passes the area limit, then the deepest of those. Storms left out are still transposed.
-def select_tempscaling_fit_storms(catmax, stormareas, maxareafraction, nfitstorms):
-    # Args:
-    #   catmax (np.ndarray): depth of each catalog storm, mm
-    #   stormareas (np.ndarray): fraction of the domain covered by each storm, in the same order as catmax
-    #   maxareafraction (float): largest allowed area fraction, storms above it are not used for fitting
-    #   nfitstorms (int): number of deepest storms to keep after the area limit
-    # Returns:
-    #   np.ndarray: boolean, one value per storm, True for storms used to fit the scaling rates
-    depths = np.asarray(catmax, dtype='float64')
-    areas = np.asarray(stormareas, dtype='float64')
-    if depths.shape[0] != areas.shape[0]:
-        sys.exit("There are " + str(areas.shape[0]) + " storm areas but " + str(depths.shape[0]) + " storm depths!")
-    if nfitstorms < 1:
-        sys.exit("'TEMPFITSTORMS' needs to be at least 1!")
-    passing = np.where(areas <= maxareafraction)[0]
-    if passing.shape[0] == 0:
+    fitstorms = areas <= maxareafraction
+    if not np.any(fitstorms):
         sys.exit("No storms pass the temperature scaling area limit, so the scaling rates can't be fitted!")
-    deepest = passing[np.argsort(depths[passing], kind='stable')][-nfitstorms:]
-    fitstorms = np.zeros(depths.shape[0], dtype=bool)
-    fitstorms[deepest] = True
-    return fitstorms
+    return fitstorms, areas
 
 
 # Added by Ashar on 2026-11-07: fits one quantile regression line of ln(storm depth) on pre-storm temperature for each quantile level
@@ -639,10 +627,12 @@ def assign_storm_quantile_rates(T_prestorm, catmax, taus, slopes, intercepts):
 
 
 # Added by Ashar on 2026-11-08: fits the skew-normal that the resampled temperatures T_res are drawn from, using the transposed storms' pre-storm temperatures
+# Added by Ashar on 2026-11-09: RainyDay_Py3.py now calls this with the pre-storm temperatures of the catalog storms that pass the fitting filters
 def fit_prestorm_temperature_distribution(T_prestorm, minstorms=10):
-    # Uses every temperature given, with no area or minimum temperature filter. Fitted by maximum likelihood with scipy.stats.skewnorm.fit.
+    # Uses every temperature given; the caller applies any area or minimum temperature filter. Fitted by maximum likelihood with scipy.stats.skewnorm.fit.
+    # Added by Ashar on 2026-11-10: Args updated, the temperatures are now the filtered catalog storms' rather than the transposed storms'
     # Args:
-    #   T_prestorm (np.ndarray): pre-storm temperature of each transposed storm, degC
+    #   T_prestorm (np.ndarray): pre-storm temperature of each storm to fit, degC (RainyDay_Py3.py passes the catalog storms that pass the fitting filters)
     #   minstorms (int): fewest temperatures allowed for the fit (default: 10)
     # Returns:
     #   a (float): skew-normal shape parameter

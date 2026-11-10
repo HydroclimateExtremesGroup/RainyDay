@@ -386,14 +386,27 @@ try:
         tempvariable = cardinfo.get("TEMPERATUREVARIABLE", "")
         if temppath == "" or tempvariable == "":
             sys.exit("ENHANCEDSST 'tempscaling' needs 'TEMPERATUREPATH' (a path to the hourly temperature files, like 'RAINPATH') and 'TEMPERATUREVARIABLE' (the temperature variable name in those files)!")
-        # Added by Ashar on 2026-11-07: limits for the storms used to fit scaling rates, only read for temperature scaling. Defaults: leave out storms with at least 1 mm/h over more than 30% of the domain, keep the deepest 1,000, and leave out storms at or below 5 degC
+        # Added by Ashar on 2026-11-07: limits for the storms used to fit scaling rates, only read for temperature scaling. Defaults: leave out storms with at least 1 mm/h over more than 30% of the domain
+        # Added by Ashar on 2026-11-09: removed the 'TEMPMINIMUM' and 'TEMPFITSTORMS' cards; the 5 degC minimum is now fixed and every storm that passes the filters is used for fitting.
+        # Added 'TEMPSTORMSPERYEAR', the catalog storms per year of data kept when a new catalog is created for temperature scaling (default 150)
+        for _removedcard in ("TEMPMINIMUM", "TEMPFITSTORMS"):
+            if _removedcard in cardinfo:
+                sys.exit("The '" + _removedcard + "' card has been removed! Delete it from your parameter file. The minimum pre-storm temperature for fitting is fixed at 5 degC and every storm that passes the filters is used.")
         try:
             tempmaxareafraction = float(cardinfo.get("TEMPMAXAREAFRACTION", 0.30))
             temparearate = float(cardinfo.get("TEMPAREARATE", 1.0))
-            tempminimum = float(cardinfo.get("TEMPMINIMUM", 5.0))
-            tempfitstorms = int(cardinfo.get("TEMPFITSTORMS", 1000))
+            # Added by Ashar on 2026-11-10: NOTE: for correct temperature-scaled results, set NSTORMS equal to the number of catalog storms (TEMPSTORMSPERYEAR times the
+            # number of years of data, or every storm in an existing catalog), so every catalog storm is transposed. Transposing only the deepest storms while the
+            # scaling statistics come from all filtered storms tilts the frequency curve (tested on the 1-hr watershed catalog: -7% at 1 yr, +4% at 200 yr).
+            # Both cards stay as options for now.
+            tempstormsperyear = float(cardinfo.get("TEMPSTORMSPERYEAR", 150))
         except (TypeError, ValueError):
-            sys.exit("'TEMPMAXAREAFRACTION', 'TEMPAREARATE', 'TEMPMINIMUM' and 'TEMPFITSTORMS' need to be numbers!")
+            sys.exit("'TEMPMAXAREAFRACTION', 'TEMPAREARATE' and 'TEMPSTORMSPERYEAR' need to be numbers!")
+        if tempstormsperyear <= 0.:
+            sys.exit("'TEMPSTORMSPERYEAR' needs to be above 0!")
+        # Added by Ashar on 2026-11-09: fixed limits for fitting the scaling rates: storms at or below 5 degC are left out of the fit and are not scaled, and fewer than 1,000 fitting storms gives a warning
+        tempminimum = 5.0
+        tempminfitstorms = 1000
     else:
         print("No rescaling will be performed!")
 except Exception:
@@ -891,7 +904,15 @@ if CreateCatalog:
     flist,nyears=RainyDay.createfilelist(inpath,includeyears,excludemonths)
     if defaultstorms:
         nstorms=nyears*20
-  
+    # Added by Ashar on 2026-11-09: temperature scaling only: the new catalog keeps TEMPSTORMSPERYEAR storms per year of data (or NSTORMS if that is larger), so the rates are fitted on more storms than are transposed.
+    # nstorms is set back to the number of storms to transpose after the catalog is written.
+    if tempscaling:
+        tempnstorms_transpose = nstorms
+        tempcatalogtarget = int(np.ceil(tempstormsperyear*nyears))
+        nstorms = max(nstorms, tempcatalogtarget)
+        tempcatalogasked = nstorms
+        print(f"Temperature scaling: the storm catalog will keep {nstorms} storms ({tempstormsperyear:g} per year for {nyears} years); the deepest {tempnstorms_transpose} will be transposed")
+
     
     # GET SUBDIMENSIONS, ETC. FROM THE NETCDF FILE RATHER THAN FROM RAINPROPERTIES  
     rainprop.spatialres,rainprop.dimensions,rainprop.bndbox,rainprop.timeres,rainprop.nodata,droplist,calendar,time_units=RainyDay.rainprop_setup(flist[0],rainprop,variables)
@@ -1335,6 +1356,12 @@ if CreateCatalog:
 
     stormlist = glob.glob(fullpath+'/StormCatalog/'+catalogname + '_storm_'+'*' + '.nc')
     stormlist = sorted(stormlist, key=lambda path: RainyDay.extract_storm_number(path, catalogname))
+    # Added by Ashar on 2026-11-09: temperature scaling only: warn if fewer storms were found than asked for, then set nstorms back to the number of storms to transpose
+    if tempscaling:
+        # Added by Ashar on 2026-11-09: compare with the number actually asked for, the larger of NSTORMS and TEMPSTORMSPERYEAR times the years
+        if nstorms < tempcatalogasked:
+            print(f"WARNING: only {nstorms} storms were found for the catalog, fewer than the {tempcatalogasked} asked for (the larger of NSTORMS and 'TEMPSTORMSPERYEAR' times the years). The scaling rates will be fitted on fewer storms and may not be exact.")
+        nstorms = min(tempnstorms_transpose, nstorms)
 
 
 #%%
@@ -1430,10 +1457,17 @@ else:
 
 # Added by Ashar on 2026-11-07: temperature scaling only: choose the storms used to fit the rates from the whole catalog, before NSTORMS trims the storms to transpose. This doesn't remove any storm from transposition.
 if tempscaling:
+    # Added by Ashar on 2026-11-09: when an existing catalog is reused, warn if it has fewer storms than TEMPSTORMSPERYEAR asks for over the years its storms span
+    if CreateCatalog==False:
+        _catyears = [np.int32(RainyDay.extract_date(storm, catalogname)[:4]) for storm in stormlist]
+        _catnyears = int(np.max(_catyears) - np.min(_catyears) + 1)
+        if nstorms_cat < tempstormsperyear*_catnyears:
+            print(f"WARNING: the storm catalog has {nstorms_cat} storms, fewer than the {int(np.ceil(tempstormsperyear*_catnyears))} asked for by 'TEMPSTORMSPERYEAR' over the {_catnyears} years its storms span. The scaling rates will be fitted on fewer storms and may not be exact.")
     print("calculating storm areas to choose the storms for fitting scaling rates...")
-    stormareas = RainyDay.get_storm_area_fractions(stormlist, domainmask, ratethreshold=temparearate)
-    tempfitmask = RainyDay.select_tempscaling_fit_storms(catmax, stormareas, tempmaxareafraction, tempfitstorms)
-    print(f"Rate fitting storms: {np.sum(stormareas <= tempmaxareafraction)} of {nstorms_cat} catalog storms have at most {100*tempmaxareafraction:.0f}% of the domain with at least {temparearate:.2f} mm/h, using the deepest {np.sum(tempfitmask)}")
+    # Added by Ashar on 2026-11-09: one call now computes the storm areas and picks the fit storms; every storm within the area limit is kept, with no cap on the number
+    tempfitmask, stormareas = RainyDay.select_tempscaling_fit_storms(stormlist, catmax, domainmask, tempmaxareafraction,
+                                                                     ratethreshold=temparearate)
+    print(f"Rate fitting storms: {np.sum(tempfitmask)} of {nstorms_cat} catalog storms have at most {100*tempmaxareafraction:.0f}% of the domain with at least {temparearate:.2f} mm/h")
     tempcatmax, tempcatx, tempcaty, tempcattime = catmax.copy(), np.array(catx, dtype=int), np.array(caty, dtype=int), cattime.copy()
 
 if nstorms<nstorms_cat:
@@ -1467,20 +1501,35 @@ if tempscaling:   ### This is where we simulate the prestorm temperatures, which
     # Added by Ashar on 2026-11-08: removed the hard-coded 'fewer than 6 hourly fields' warning; get_prestorm_temperatures now warns using the time step of the temperature files
     T_prestorm = _catalogtemps[_transposemask]
     print(f"Pre-storm temperatures of transposed storms: mean {np.mean(T_prestorm):.2f}, SD {np.std(T_prestorm):.2f}, min {np.min(T_prestorm):.2f}, max {np.max(T_prestorm):.2f} degC")
-    # Added by Ashar on 2026-11-08: fit the skew-normal for the resampled temperatures T_res to all transposed storms' pre-storm temperatures, replacing the hard-coded one
-    tempskew_a, tempskew_loc, tempskew_scale = RainyDay.fit_prestorm_temperature_distribution(T_prestorm)
-    _tempskewmean, _tempskewvar = skewnorm.stats(tempskew_a, loc=tempskew_loc, scale=tempskew_scale, moments='mv')
-    print(f"Skew-normal fitted to pre-storm temperatures of transposed storms for T_res: a {tempskew_a:.2f}, loc {tempskew_loc:.2f}, scale {tempskew_scale:.2f}, mean {float(_tempskewmean):.2f}, SD {np.sqrt(float(_tempskewvar)):.2f} degC")
-
     # Added by Ashar on 2026-11-07: leave storms at or below the minimum pre-storm temperature out of the rate fit; they can still be transposed
     tempfitmask = tempfitmask & (_catalogtemps > tempminimum)
     print(f"Rate fitting storms: {np.sum(tempfitmask)} are above {tempminimum:.2f} degC; {np.sum(_transposemask & tempfitmask)} of the {nstorms} transposed storms are among them")
+    # Added by Ashar on 2026-11-09: warn, but keep running, when fewer than 1,000 storms are left to fit the rates
+    if np.sum(tempfitmask) < tempminfitstorms:
+        print(f"WARNING: only {np.sum(tempfitmask)} storms are left to fit the scaling rates, fewer than {tempminfitstorms}. The scaling rates may not be exact.")
 
     # Added by Ashar on 2026-11-07: replaced the single scaling rate with per-quantile rates; lines are fitted on the fitting storms and every transposed storm gets its own rate from them
     tempquantiles, tempquantilerates, tempquantileintercepts = RainyDay.fit_temperature_quantile_lines(_catalogtemps[tempfitmask], tempcatmax[tempfitmask])
     stormquantiles, S_storm = RainyDay.assign_storm_quantile_rates(T_prestorm, catmax, tempquantiles, tempquantilerates, tempquantileintercepts)
+    # Added by Ashar on 2026-11-09: only transposed storms that pass the fitting filters (area limit and above the minimum temperature) are scaled. The others, large-area
+    # and cold storms, are outside what the lines describe, so they get a rate of 0 and are transposed unscaled.
+    _scaledstorms = tempfitmask[_transposemask]
+    S_storm[~_scaledstorms] = 0.
     print("Scaling rate by quantile, slope of ln(catmax) on T_prestorm: " + ", ".join(f"tau {_tau:.2f}: {100*_rate:.2f}% per degC" for _tau, _rate in zip(tempquantiles, tempquantilerates)))
-    print(f"Storm scaling rates: min {100*np.min(S_storm):.2f}, median {100*np.median(S_storm):.2f}, max {100*np.max(S_storm):.2f}% per degC, across {nstorms} transposed storms")
+    print(f"{np.sum(_scaledstorms)} of the {nstorms} transposed storms pass the fitting filters and will be scaled; {np.sum(~_scaledstorms)} "
+          f"({np.sum(~_scaledstorms & (T_prestorm <= tempminimum))} at or below {tempminimum:.2f} degC, the rest above the area limit) will not be scaled")
+    # Added by Ashar on 2026-11-10: only print rate statistics when at least one transposed storm is scaled, so a run where none pass the filters doesn't crash here
+    if np.any(_scaledstorms):
+        print(f"Storm scaling rates of scaled storms: min {100*np.min(S_storm[_scaledstorms]):.2f}, median {100*np.median(S_storm[_scaledstorms]):.2f}, max {100*np.max(S_storm[_scaledstorms]):.2f}% per degC")
+    else:
+        print("WARNING: none of the transposed storms pass the fitting filters, so no storm will be scaled. Set NSTORMS equal to the number of catalog storms to transpose them all.")
+
+    # Added by Ashar on 2026-11-09: the skew-normal for the resampled temperatures T_res is fitted in each run. This replaces the hard-coded a=-3.971, loc=29.191, scale=8.121.
+    # Added by Ashar on 2026-11-10: fitted to all catalog storms that pass the filters (the same storms the quantile lines are fitted on), not only the transposed ones,
+    # so all the scaling statistics come from the filtered storms. When every catalog storm is transposed the two sets are the same.
+    tempskew_a, tempskew_loc, tempskew_scale = RainyDay.fit_prestorm_temperature_distribution(_catalogtemps[tempfitmask])
+    _tempskewmean, _tempskewvar = skewnorm.stats(tempskew_a, loc=tempskew_loc, scale=tempskew_scale, moments='mv')
+    print(f"Skew-normal fitted to the pre-storm temperatures of the {np.sum(tempfitmask)} filtered catalog storms for T_res: a {tempskew_a:.2f}, loc {tempskew_loc:.2f}, scale {tempskew_scale:.2f}, mean {float(_tempskewmean):.2f}, SD {np.sqrt(float(_tempskewvar)):.2f} degC")
 
 #==============================================================================
 # If the storm catalog has a different duration than the specified duration, fix it!
@@ -2402,6 +2451,7 @@ if FreqAnalysis:
         # rectangular and irregular uniform domains (same skew-normal as before), and copied to every pt so pointlist gets it too.
         # Drawn after the placement draws so irregular tempscaling runs keep their previous RNG sequence.
         # Added by Ashar on 2026-11-08: the skew-normal parameters are now the ones fitted to the transposed storms' pre-storm temperatures, not the hard-coded a=0.984, loc=24.060, scale=4.278
+        # Added by Ashar on 2026-11-09: the parameters are fitted to the filtered catalog storms' pre-storm temperatures where T_prestorm is read; storms that are not scaled get a rate of 0, so their draw has no effect
         if tempscaling:
             n_realizations = np.sum(whichstorms==i)
             simulated_temps = skewnorm.rvs(a=tempskew_a, loc=tempskew_loc, scale=tempskew_scale, size=n_realizations)
